@@ -1,3 +1,23 @@
+> ## About this fork
+>
+> This is a private staging fork of [j6k4m8/goosepaper](https://github.com/j6k4m8/goosepaper),
+> used to prepare a handful of independent, self-contained changes as separate pull requests.
+> Each change lives on its own branch, based directly on `master`, and passes the full test suite
+> on its own - none of them depend on this fork being merged as a whole. `mainline` combines all
+> of them for local development/testing of a downstream project and is not itself meant to become
+> a PR.
+>
+> | Branch | Adds | Depends on |
+> |---|---|---|
+> | `feature/rss-content-filters` | `content_filters` (CSS-selector/regex cleanup) and `skip_title_patterns` as native, optional fields on the `"rss"` source type - ad/cookie-banner/paywall-stub cleanup and sponsored-post skipping, expressible directly in a goosepaper config. | `master` |
+> | `feature/puzzle-provider` | A new `"puzzle"` source type: Sudoku, Binoxxo, Futoshiki, Kakuro, and Shikaku, generated and rendered as plain HTML/CSS (no images, no reportlab). Includes a fix for same-type/same-difficulty puzzles (`count > 1`) getting colliding headlines. | `master` |
+> | `feature/appendix-placement` | A new `PlacementPreference.APPENDIX` value: stories tagged with it render together in their own block at the very end of the document (outside any multi-column container, so page breaks between them are reliable regardless of layout) - the same general pattern already used for `EAR`/`SIDEBAR`/`UTILITY`, just for end-of-document content. | `master` |
+> | `feature/puzzle-explanations` | Builds on the two branches above: puzzle solutions now render via `PlacementPreference.APPENDIX` instead of an in-place `FULLPAGE` workaround, and a new `explanation` option (`"none"`/`"inline"`/`"footer"`/`"appendix"`) adds an optional short rules blurb per puzzle type, deduplicated across sources via Goosepaper's existing headline-based `deduplicate=True`. | `feature/puzzle-provider`, `feature/appendix-placement` |
+> | `fix/wikipedia-empty-feed` | `WikipediaCurrentEventsStoryProvider` no longer raises an unhandled `IndexError` when the upstream feed returns zero entries (transient network issues); it now degrades to "no story this run", like an empty RSS feed already does elsewhere. | `master` |
+>
+> Each branch's own commit message has the full rationale and, where relevant, how it was
+> verified (test suite + real PDF renders).
+
 <p align=center><img align=center src='https://raw.githubusercontent.com/j6k4m8/goosepaper/master/docs/goose.svg' width=600 /></p>
 <h6 align=center>a daily newsfeed delivered to your remarkable tablet</h6>
 
