@@ -630,6 +630,18 @@ def _source_schema(source_type: str) -> Dict[str, Any]:
             "required": set(),
             "optional": set(),
         },
+        "puzzle": {
+            "required": set(),
+            "optional": {
+                "puzzle_type",
+                "box_size",
+                "size",
+                "difficulty",
+                "count",
+                "seed",
+                "explanation",
+            },
+        },
     }
     if source_type not in schemas:
         raise ConfigError(
@@ -684,6 +696,13 @@ def _validate_source_options(source_type: str, options: Dict[str, Any], index: i
         "skip_title_patterns": lambda value: _validate_string_list(
             value, f"source #{index} skip_title_patterns"
         ),
+        "puzzle_type": lambda value: _validate_puzzle_type(value, index),
+        "box_size": lambda value: _validate_puzzle_box_size(value, index),
+        "size": lambda value: _validate_positive_int(value, f"source #{index} size"),
+        "difficulty": lambda value: _validate_puzzle_difficulty(value, index),
+        "count": lambda value: _validate_positive_int(value, f"source #{index} count"),
+        "seed": lambda value: _validate_int(value, f"source #{index} seed"),
+        "explanation": lambda value: _validate_puzzle_explanation(value, index),
     }
 
     for key, value in options.items():
@@ -786,6 +805,47 @@ def _validate_content_filters(value: Any, index: int):
             raise ConfigError(
                 f"source #{index} content_filters[{i}] of type regex requires a non-empty pattern."
             )
+
+
+def _validate_int(value: Any, context: str):
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ConfigError(f"{context} must be an integer.")
+
+
+_PUZZLE_TYPES = {"sudoku", "binoxxo", "futoshiki", "kakuro", "shikaku"}
+
+
+def _validate_puzzle_type(value: Any, index: int):
+    if value not in _PUZZLE_TYPES:
+        raise ConfigError(
+            f"source #{index} puzzle_type must be one of "
+            + ", ".join(f'"{t}"' for t in sorted(_PUZZLE_TYPES))
+            + "."
+        )
+
+
+def _validate_puzzle_box_size(value: Any, index: int):
+    if value not in (2, 3):
+        raise ConfigError(f"source #{index} box_size must be 2 or 3.")
+
+
+def _validate_puzzle_difficulty(value: Any, index: int):
+    if value not in {"easy", "medium", "hard"}:
+        raise ConfigError(
+            f'source #{index} difficulty must be one of "easy", "medium", or "hard".'
+        )
+
+
+_PUZZLE_EXPLANATION_MODES = {"none", "inline", "footer", "appendix"}
+
+
+def _validate_puzzle_explanation(value: Any, index: int):
+    if value not in _PUZZLE_EXPLANATION_MODES:
+        raise ConfigError(
+            f"source #{index} explanation must be one of "
+            + ", ".join(f'"{mode}"' for mode in sorted(_PUZZLE_EXPLANATION_MODES))
+            + "."
+        )
 
 
 def _validate_body_source(source_type: str, value: Any, index: int):
