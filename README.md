@@ -1,6 +1,6 @@
 > ## About this fork
 >
-> This is a private staging fork of [j6k4m8/goosepaper](https://github.com/j6k4m8/goosepaper),
+> This is a staging fork of [j6k4m8/goosepaper](https://github.com/j6k4m8/goosepaper),
 > used to prepare a handful of independent, self-contained changes as separate pull requests.
 > Each change lives on its own branch, based directly on `master`, and passes the full test suite
 > on its own - none of them depend on this fork being merged as a whole. `mainline` combines all
