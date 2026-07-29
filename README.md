@@ -184,7 +184,7 @@ Binoxxo, Futoshiki, Kakuro, or Shikaku - and renders each as plain HTML/CSS (no 
 puzzle's solution is collected separately and placed in the paper's appendix.
 
 ```json
-{ "type": "puzzle", "puzzle_type": "sudoku", "difficulty": "hard", "count": 2, "name": "Sudoku" }
+{ "type": "puzzle", "puzzle_type": "sudoku", "difficulty": "hard", "count": 2, "explanation": "footer", "name": "Sudoku" }
 ```
 
 | Option | Required? | Default | What it does |
@@ -195,9 +195,8 @@ puzzle's solution is collected separately and placed in the paper's appendix.
 | `difficulty` | optional | `"medium"` | One of `easy`, `medium`, `hard`. Controls how many cells/constraints are given, and (for every type but sudoku) the default grid size when `size` is unset. |
 | `count` | optional | `1` | How many puzzle instances of this `puzzle_type`+`difficulty` to generate. |
 | `seed` | optional | random | RNG seed, for reproducible generation. |
+| `explanation` | optional | `"none"` | `"none"`, `"inline"` (a short rules blurb repeated under every puzzle instance), `"footer"` (a real CSS footnote at the bottom of whichever page it lands on - one footnote per `puzzle_type` in the whole paper, with every instance of that type carrying its own small reference mark pointing at it), or `"appendix"` (one rules blurb per `puzzle_type`, grouped with the solutions at the end of the document). |
 | `name` | optional | none | Visible heading for this puzzle instance (and its solution, suffixed " - Lösung"). If omitted, no heading renders for the puzzle itself - only the enclosing section's own title identifies it. Useful when several different puzzle types share one section; redundant (and best left unset) when a section already covers exactly one type+difficulty. |
-
-(`feature/puzzle-explanations`, stacked on top of this branch, adds one more option: `explanation`.)
 
 # More Questions, Infrequently Asked
 
