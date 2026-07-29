@@ -155,6 +155,7 @@ def construct_story_providers_from_source_configs(source_configs):
                     "count",
                     "seed",
                     "explanation",
+                    "name",
                 }
             },
         ),
