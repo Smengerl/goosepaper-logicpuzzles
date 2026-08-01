@@ -304,7 +304,7 @@ def test_rss_provider_can_hide_all_bylines(monkeypatch):
     assert stories[1].byline is None
 
 
-def test_rss_provider_applies_content_filters_to_the_fetched_body(monkeypatch):
+def test_rss_provider_applies_content_skip_filters_to_the_fetched_body(monkeypatch):
     monkeypatch.setattr(
         rss.feedparser,
         "parse",
@@ -323,7 +323,7 @@ def test_rss_provider_applies_content_filters_to_the_fetched_body(monkeypatch):
 
     provider = rss.RSSFeedStoryProvider(
         "https://example.com/feed.xml",
-        content_filters=[{"type": "css", "selector": "div.ad"}],
+        content_skip_filters=[{"type": "css", "selector": "div.ad"}],
     )
     stories = provider.get_stories()
 

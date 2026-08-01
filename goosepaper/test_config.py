@@ -286,7 +286,7 @@ def test_load_paper_config_rejects_invalid_rss_body_source():
         )
 
 
-def test_load_paper_config_accepts_rss_content_filters_and_skip_title_patterns():
+def test_load_paper_config_accepts_rss_content_skip_filters_and_skip_title_patterns():
     with _TempWorkspace() as tmp_path:
         config_path = tmp_path / "paper.json"
         _write_json(
@@ -298,7 +298,7 @@ def test_load_paper_config_accepts_rss_content_filters_and_skip_title_patterns()
                     {
                         "type": "rss",
                         "url": "https://example.com/feed.xml",
-                        "content_filters": [
+                        "content_skip_filters": [
                             {"type": "css", "selector": "div.ad"},
                             {"type": "regex", "pattern": "Mehr anzeigen", "flags": "i"},
                         ],
@@ -310,7 +310,7 @@ def test_load_paper_config_accepts_rss_content_filters_and_skip_title_patterns()
 
         config = load_paper_config(config_path)
 
-        assert config.sources[0].options["content_filters"] == [
+        assert config.sources[0].options["content_skip_filters"] == [
             {"type": "css", "selector": "div.ad"},
             {"type": "regex", "pattern": "Mehr anzeigen", "flags": "i"},
         ]
@@ -329,7 +329,7 @@ def test_load_paper_config_rejects_content_filter_with_unknown_type():
                     {
                         "type": "rss",
                         "url": "https://example.com/feed.xml",
-                        "content_filters": [{"type": "xpath", "selector": "//div"}],
+                        "content_skip_filters": [{"type": "xpath", "selector": "//div"}],
                     }
                 ],
             },
@@ -401,7 +401,7 @@ def test_load_paper_config_rejects_css_content_filter_without_selector():
                     {
                         "type": "rss",
                         "url": "https://example.com/feed.xml",
-                        "content_filters": [{"type": "css"}],
+                        "content_skip_filters": [{"type": "css"}],
                     }
                 ],
             },
@@ -425,7 +425,7 @@ def test_load_paper_config_rejects_regex_content_filter_without_pattern():
                     {
                         "type": "rss",
                         "url": "https://example.com/feed.xml",
-                        "content_filters": [{"type": "regex"}],
+                        "content_skip_filters": [{"type": "regex"}],
                     }
                 ],
             },
@@ -449,7 +449,7 @@ def test_load_paper_config_rejects_content_filter_with_unknown_field():
                     {
                         "type": "rss",
                         "url": "https://example.com/feed.xml",
-                        "content_filters": [
+                        "content_skip_filters": [
                             {"type": "css", "selector": "div.ad", "typo_field": True}
                         ],
                     }
