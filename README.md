@@ -175,6 +175,33 @@ Check out [this example PDF](https://github.com/j6k4m8/goosepaper/blob/master/do
 -   [Weather](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/weather.py). These stories appear in the "ear" of the front page, just like a regular ol' newspaper
 -   [RSS Feeds](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/rss.py)
 -   [Reddit Subreddits](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/reddit.py)
+-   [Daily Comic Strips](goosepaper/storyprovider/comic.py) (this fork's addition - see below)
+
+## comic source options
+
+The `"comic"` source type (added by this fork) downloads today's strip of a daily comic and
+embeds it as a single image story. The fetch mechanism (page URL, request headers, and the
+`<img>` lookup) for each comic is ported from
+[evidlo/remarkable_news](https://github.com/evidlo/remarkable_news), which uses the same
+approach to push comics straight to a reMarkable's suspend screen.
+
+```json
+{ "type": "comic", "comic_type": "xkcd" }
+```
+
+| Option | Required? | Default | What it does |
+|---|---|---|---|
+| `comic_type` | **required** | - | One of `xkcd`, `cah` (Calvin and Hobbes), `garfield`. No default on purpose - a config that forgets it fails loudly instead of silently always fetching XKCD. |
+
+Notes per comic:
+
+-   `xkcd`: headline is the strip's real title, and the mouseover joke text (XKCD's signature
+    `title` attribute) is shown as a caption under the image.
+-   `cah`: gocomics.com requires browser-like request headers, or it blocks the request; those
+    are sent automatically. Its page URL is date-scoped (`.../calvinandhobbes/YYYY/MM/DD`), so
+    it always resolves to the current day's strip.
+-   `garfield`: no title/caption is available on the source page - the story's headline falls
+    back to `"Garfield – <date>"`.
 
 # More Questions, Infrequently Asked
 
