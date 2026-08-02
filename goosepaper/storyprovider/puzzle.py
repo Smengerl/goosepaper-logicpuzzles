@@ -43,12 +43,12 @@ table.futoshiki-grid td.fut-spacer { width: 0.7em; height: 0.7em; }
 table.kakuro-grid td { width: 2em; height: 2em; border: 1px solid #999; padding: 0;
   text-align: center; font-family: monospace; }
 table.kakuro-grid td.kakuro-black {
-  background: linear-gradient(to top right, #000 49.5%, #999 49.5%, #999 50.5%, #000 50.5%);
+  background: linear-gradient(to top right, #999 49.5%, #000 49.5%, #000 50.5%, #999 50.5%);
   position: relative;
 }
 table.kakuro-grid .kakuro-clue { position: relative; width: 100%; height: 100%; }
-table.kakuro-grid .kakuro-h { position: absolute; top: 0; right: 2px; font-size: 0.5em; color: #fff; }
-table.kakuro-grid .kakuro-v { position: absolute; bottom: 0; left: 2px; font-size: 0.5em; color: #fff; }
+table.kakuro-grid .kakuro-h { position: absolute; top: 0; right: 2px; font-size: 0.5em; color: #000; }
+table.kakuro-grid .kakuro-v { position: absolute; bottom: 0; left: 2px; font-size: 0.5em; color: #000; }
 
 /* Shikaku cell size is as large as Sudoku's (width: 2em, font-size: 1.15em) wherever that
 still fits a printed page, but Shikaku's grid isn't a fixed 9x9 like Sudoku - it's 5x5/10x10/20x20
