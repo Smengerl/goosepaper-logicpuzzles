@@ -331,6 +331,94 @@ def test_rss_provider_applies_skip_content_filters_to_the_fetched_body(monkeypat
     assert "Buy now" not in stories[0].body_html
 
 
+def test_rss_provider_skips_stories_below_min_body_text_length(monkeypatch):
+    monkeypatch.setattr(
+        rss.feedparser,
+        "parse",
+        lambda _: SimpleNamespace(
+            entries=[
+                _feed_entry(
+                    title="Too short",
+                    content=[rss.feedparser.FeedParserDict({"value": "<p>Hi</p>"})],
+                ),
+                _feed_entry(
+                    title="Long enough",
+                    content=[
+                        rss.feedparser.FeedParserDict(
+                            {"value": "<p>" + "word " * 20 + "</p>"}
+                        )
+                    ],
+                ),
+            ]
+        ),
+    )
+
+    provider = rss.RSSFeedStoryProvider(
+        "https://example.com/feed.xml",
+        min_body_text_length=50,
+    )
+    stories = provider.get_stories()
+
+    assert len(stories) == 1
+    assert stories[0].headline == "Long enough"
+
+
+def test_rss_provider_skips_stories_above_max_body_text_length(monkeypatch):
+    monkeypatch.setattr(
+        rss.feedparser,
+        "parse",
+        lambda _: SimpleNamespace(
+            entries=[
+                _feed_entry(
+                    title="Way too long",
+                    content=[
+                        rss.feedparser.FeedParserDict(
+                            {"value": "<p>" + "word " * 200 + "</p>"}
+                        )
+                    ],
+                ),
+                _feed_entry(
+                    title="Reasonable length",
+                    content=[
+                        rss.feedparser.FeedParserDict(
+                            {"value": "<p>" + "word " * 20 + "</p>"}
+                        )
+                    ],
+                ),
+            ]
+        ),
+    )
+
+    provider = rss.RSSFeedStoryProvider(
+        "https://example.com/feed.xml",
+        max_body_text_length=500,
+    )
+    stories = provider.get_stories()
+
+    assert len(stories) == 1
+    assert stories[0].headline == "Reasonable length"
+
+
+def test_rss_provider_body_text_length_filters_default_to_disabled(monkeypatch):
+    monkeypatch.setattr(
+        rss.feedparser,
+        "parse",
+        lambda _: SimpleNamespace(
+            entries=[
+                _feed_entry(
+                    title="Any length",
+                    content=[rss.feedparser.FeedParserDict({"value": "<p>Hi</p>"})],
+                )
+            ]
+        ),
+    )
+
+    provider = rss.RSSFeedStoryProvider("https://example.com/feed.xml")
+    stories = provider.get_stories()
+
+    assert len(stories) == 1
+
+
 def test_rss_provider_skips_entries_matching_skip_title_patterns(monkeypatch):
     monkeypatch.setattr(
         rss.feedparser,
