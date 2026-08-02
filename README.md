@@ -16,6 +16,7 @@
 > | `fix/wikipedia-empty-feed` | `WikipediaCurrentEventsStoryProvider` no longer raises an unhandled `IndexError` when the upstream feed returns zero entries (transient network issues); it now degrades to "no story this run", like an empty RSS feed already does elsewhere. | `master` | [#118](https://github.com/j6k4m8/goosepaper/pull/118) (merged) |
 > | `fix/code-block-overflow` | `<pre>`/`<code>` blocks from RSS-sourced articles now wrap (`white-space: pre-wrap` + `overflow-wrap`/`word-break`) instead of silently overflowing into whatever a multi-column layout rendered next to them; `<pre>` also gets a light background/border so it reads as code instead of blending into body text. | `master` | [#120](https://github.com/j6k4m8/goosepaper/pull/120) |
 > | `fix/svg-overflow` | Inline `<svg>` icons from RSS-sourced articles no longer render at full column width - `max-width: 100%` constrains ones with an explicit size, and unsized ones (readability strips width/height from every `<svg>` it cleans) get a text-relative `1em x 1em` default instead of filling the container. | `master` | [#119](https://github.com/j6k4m8/goosepaper/pull/119) (merged) |
+> | `feature/comic-provider` | A new `"comic"` source type: downloads today's XKCD, Calvin and Hobbes, or Garfield strip and embeds it as an image story. The fetch mechanism (page URL, per-comic headers, `<img>` XPath) is ported from [evidlo/remarkable_news](https://github.com/evidlo/remarkable_news). | `master` | not yet opened |
 >
 > Each branch's own commit message has the full rationale and, where relevant, how it was
 > verified (test suite + real PDF renders).
@@ -209,6 +210,7 @@ Check out [this example PDF](https://github.com/j6k4m8/goosepaper/blob/master/do
 -   [RSS Feeds](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/rss.py)
 -   [Reddit Subreddits](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/reddit.py)
 -   [Logic Puzzles](goosepaper/storyprovider/puzzle.py) (this fork's addition - see below)
+-   [Daily Comic Strips](goosepaper/storyprovider/comic.py) (this fork's addition - see below)
 
 ## puzzle source options
 
@@ -229,6 +231,32 @@ puzzle's solution is collected separately and placed in the paper's appendix.
 | `seed` | optional | random | RNG seed, for reproducible generation. |
 | `explanation` | optional | `"none"` | `"none"`, `"inline"` (a short rules blurb repeated under every puzzle instance), `"footer"` (a real CSS footnote at the bottom of whichever page it lands on - one footnote per `puzzle_type` in the whole paper, with every instance of that type carrying its own small reference mark pointing at it), or `"appendix"` (one rules blurb per `puzzle_type`, grouped with the solutions at the end of the document). |
 | `name` | optional | none | Visible heading for this puzzle instance (and its solution, suffixed " - Lösung"). If omitted, no heading renders for the puzzle itself - only the enclosing section's own title identifies it. Useful when several different puzzle types share one section; redundant (and best left unset) when a section already covers exactly one type+difficulty. |
+
+## comic source options
+
+The `"comic"` source type (added by this fork) downloads today's strip of a daily comic and
+embeds it as a single image story. The fetch mechanism (page URL, request headers, and the
+`<img>` lookup) for each comic is ported from
+[evidlo/remarkable_news](https://github.com/evidlo/remarkable_news), which uses the same
+approach to push comics straight to a reMarkable's suspend screen.
+
+```json
+{ "type": "comic", "comic_type": "xkcd" }
+```
+
+| Option | Required? | Default | What it does |
+|---|---|---|---|
+| `comic_type` | **required** | - | One of `xkcd`, `cah` (Calvin and Hobbes), `garfield`. No default on purpose - a config that forgets it fails loudly instead of silently always fetching XKCD. |
+
+Notes per comic:
+
+-   `xkcd`: headline is the strip's real title, and the mouseover joke text (XKCD's signature
+    `title` attribute) is shown as a caption under the image.
+-   `cah`: gocomics.com requires browser-like request headers, or it blocks the request; those
+    are sent automatically. Its page URL is date-scoped (`.../calvinandhobbes/YYYY/MM/DD`), so
+    it always resolves to the current day's strip.
+-   `garfield`: no title/caption is available on the source page - the story's headline falls
+    back to `"Garfield – <date>"`.
 
 # More Questions, Infrequently Asked
 

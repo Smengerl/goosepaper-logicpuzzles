@@ -172,3 +172,11 @@ def test_construct_story_providers_passes_puzzle_options():
     assert stories[0].count == 2
     assert stories[0].seed == 7
     assert stories[0].name == "Binoxxo"
+
+
+def test_construct_story_providers_passes_comic_type_option():
+    stories = construct_story_providers_from_source_configs(
+        [{"type": "comic", "comic_type": "garfield"}]
+    )
+
+    assert stories[0].comic_type == "garfield"

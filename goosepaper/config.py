@@ -643,6 +643,10 @@ def _source_schema(source_type: str) -> Dict[str, Any]:
                 "name",
             },
         },
+        "comic": {
+            "required": {"comic_type"},
+            "optional": set(),
+        },
     }
     if source_type not in schemas:
         raise ConfigError(
@@ -708,6 +712,7 @@ def _validate_source_options(source_type: str, options: Dict[str, Any], index: i
         "accept_title_patterns": lambda value: _validate_string_list(
             value, f"source #{index} accept_title_patterns"
         ),
+        "comic_type": lambda value: _validate_comic_type(value, index),
     }
 
     for key, value in options.items():
@@ -766,6 +771,18 @@ def _validate_weather_mode(value: Any, index: int):
     if value not in {"summary", "hourly", "daily", "hourly_daily"}:
         raise ConfigError(
             f'source #{index} mode must be one of "summary", "hourly", "daily", or "hourly_daily".'
+        )
+
+
+_COMIC_TYPES = {"xkcd", "cah", "garfield"}
+
+
+def _validate_comic_type(value: Any, index: int):
+    if value not in _COMIC_TYPES:
+        raise ConfigError(
+            f"source #{index} comic_type must be one of "
+            + ", ".join(f'"{t}"' for t in sorted(_COMIC_TYPES))
+            + "."
         )
 
 

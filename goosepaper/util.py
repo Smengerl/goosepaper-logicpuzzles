@@ -162,6 +162,11 @@ def construct_story_providers_from_source_configs(source_configs):
                 }
             },
         ),
+        "comic": (
+            "goosepaper.storyprovider.comic",
+            "DailyComicStoryProvider",
+            lambda options: {"comic_type": options["comic_type"]},
+        ),
     }
 
     stories = []
