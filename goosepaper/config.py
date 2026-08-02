@@ -592,6 +592,8 @@ def _source_schema(source_type: str) -> Dict[str, Any]:
                 "body_source",
                 "content_skip_filters",
                 "skip_title_patterns",
+                "content_accept_filters",
+                "accept_title_patterns",
             },
         },
         "mastodon": {
@@ -702,6 +704,10 @@ def _validate_source_options(source_type: str, options: Dict[str, Any], index: i
         "seed": lambda value: _validate_int(value, f"source #{index} seed"),
         "explanation": lambda value: _validate_puzzle_explanation(value, index),
         "name": lambda value: _validate_string(value, f"source #{index} name"),
+        "content_accept_filters": lambda value: _validate_content_accept_filters(value, index),
+        "accept_title_patterns": lambda value: _validate_string_list(
+            value, f"source #{index} accept_title_patterns"
+        ),
     }
 
     for key, value in options.items():
@@ -845,6 +851,26 @@ def _validate_puzzle_explanation(value: Any, index: int):
             + ", ".join(f'"{mode}"' for mode in sorted(_PUZZLE_EXPLANATION_MODES))
             + "."
         )
+
+
+def _validate_content_accept_filters(value: Any, index: int):
+    if not isinstance(value, list):
+        raise ConfigError(f"source #{index} content_accept_filters must be an array.")
+    allowed_keys = {"selector"}
+    for i, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ConfigError(f"source #{index} content_accept_filters[{i}] must be an object.")
+        extra_keys = set(item) - allowed_keys
+        if extra_keys:
+            raise ConfigError(
+                f"source #{index} content_accept_filters[{i}] has unknown field(s): "
+                + ", ".join(sorted(extra_keys))
+                + "."
+            )
+        if not item.get("selector"):
+            raise ConfigError(
+                f"source #{index} content_accept_filters[{i}] requires a non-empty selector."
+            )
 
 
 def _validate_body_source(source_type: str, value: Any, index: int):
