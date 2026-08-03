@@ -193,15 +193,23 @@ approach to push comics straight to a reMarkable's suspend screen.
 |---|---|---|---|
 | `comic_type` | **required** | - | One of `xkcd`, `cah` (Calvin and Hobbes), `garfield`. No default on purpose - a config that forgets it fails loudly instead of silently always fetching XKCD. |
 
+Every story's headline is a fixed, source-derived name - `"XKCD"`, `"Garfield"`, or
+`"Calvin and Hobbes"` - never the strip's own per-day title, and no byline is set. Two comic
+sources commonly sit in the same section (e.g. a "Comics" section with both `garfield` and
+`cah`); a byline or a per-day dynamic headline would just repeat the same source name the
+headline already shows, or produce a needlessly long heading - neither adds anything a reader
+can use for a comic, unlike a byline on an RSS article (which distinguishes otherwise-anonymous
+entries pulled from different feeds into one section).
+
 Notes per comic:
 
--   `xkcd`: headline is the strip's real title, and the mouseover joke text (XKCD's signature
-    `title` attribute) is shown as a caption under the image.
+-   `xkcd`: the strip's real per-day title is still available via the embedded image's `alt`
+    attribute, and the mouseover joke text (XKCD's signature `title` attribute) still renders as
+    a caption under the image - only the *headline* is fixed to `"XKCD"`.
 -   `cah`: gocomics.com requires browser-like request headers, or it blocks the request; those
     are sent automatically. Its page URL is date-scoped (`.../calvinandhobbes/YYYY/MM/DD`), so
     it always resolves to the current day's strip.
--   `garfield`: no title/caption is available on the source page - the story's headline falls
-    back to `"Garfield – <date>"`.
+-   `garfield`: no title/caption is available on the source page.
 
 # More Questions, Infrequently Asked
 
