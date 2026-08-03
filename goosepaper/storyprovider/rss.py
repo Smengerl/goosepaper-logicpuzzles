@@ -36,6 +36,7 @@ class RSSFeedStoryProvider(StoryProvider):
         accept_title_patterns: Optional[List[str]] = None,
         min_body_text_length: Optional[int] = None,
         max_body_text_length: Optional[int] = None,
+        prefer_feed_title: bool = False,
     ) -> None:
         if byline not in RSS_BYLINE_MODES:
             raise ValueError(
@@ -56,6 +57,7 @@ class RSSFeedStoryProvider(StoryProvider):
         self.accept_title_patterns = accept_title_patterns or []
         self.min_body_text_length = min_body_text_length
         self.max_body_text_length = max_body_text_length
+        self.prefer_feed_title = prefer_feed_title
         self._since = (
             datetime.datetime.now() - datetime.timedelta(days=since_days_ago)
             if since_days_ago
@@ -85,6 +87,7 @@ class RSSFeedStoryProvider(StoryProvider):
                 source,
                 date,
                 body_source=self.body_source,
+                prefer_feed_title=self.prefer_feed_title,
             )
 
             if story is None:
@@ -121,9 +124,12 @@ def _story_from_entry(
     source: str,
     date: datetime.datetime,
     body_source: str = "auto",
+    prefer_feed_title: bool = False,
 ) -> Optional[Story]:
     try:
-        return _story_from_entry_unsafe(entry, source, date, body_source=body_source)
+        return _story_from_entry_unsafe(
+            entry, source, date, body_source=body_source, prefer_feed_title=prefer_feed_title
+        )
     except Exception as err:
         print(
             f"Sad honk :/ Skipping {entry.get('link', entry.get('title'))}: {err}"
@@ -136,6 +142,7 @@ def _story_from_entry_unsafe(
     source: str,
     date: datetime.datetime,
     body_source: str = "auto",
+    prefer_feed_title: bool = False,
 ) -> Story:
     if body_source == "summary":
         return Story(
@@ -191,6 +198,7 @@ def _story_from_entry_unsafe(
         source,
         date,
         fallback_body_html=fallback_body_html,
+        prefer_feed_title=prefer_feed_title,
     )
 
 
@@ -200,6 +208,7 @@ def _story_from_response(
     source: str,
     date: datetime.datetime,
     fallback_body_html: str = "",
+    prefer_feed_title: bool = False,
 ) -> Story:
     content_type = response.headers.get("content-type", "")
     if "charset" not in content_type.lower():
@@ -217,7 +226,10 @@ def _story_from_response(
 
     try:
         doc = Document(page_text)
-        headline = doc.title() or entry["title"]
+        # readability's own title extraction is unreliable on some sites (e.g. it
+        # returns just the site name for every article on some blogs); the feed's
+        # own <title> is usually accurate, so let callers prefer it outright.
+        headline = entry["title"] if prefer_feed_title else (doc.title() or entry["title"])
         body_html = doc.summary() or fallback_body_html
     except Exception:
         headline = entry["title"]
