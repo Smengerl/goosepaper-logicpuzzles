@@ -551,6 +551,41 @@ def test_rss_provider_respects_declared_charset(monkeypatch):
     assert seen["html"] == "café"
 
 
+def test_rss_provider_skips_entry_that_raises_without_dropping_the_whole_feed(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        rss.feedparser,
+        "parse",
+        lambda _: SimpleNamespace(
+            entries=[
+                _feed_entry(
+                    title="Broken link",
+                    link="https://dead.example.com/story",
+                    content=None,
+                ),
+                _feed_entry(
+                    title="Good story",
+                    content=[rss.feedparser.FeedParserDict({"value": "<p>Good</p>"})],
+                ),
+            ]
+        ),
+    )
+
+    def fake_get(url, **kwargs):
+        if "dead.example.com" in url:
+            raise ConnectionError("SSL handshake failed")
+        raise AssertionError("requests.get should not run for entries with embedded content")
+
+    monkeypatch.setattr(rss.requests, "get", fake_get)
+
+    provider = rss.RSSFeedStoryProvider("https://example.com/feed.xml")
+    stories = provider.get_stories()
+
+    assert len(stories) == 1
+    assert stories[0].headline == "Good story"
+
+
 def test_rss_provider_can_show_only_first_byline(monkeypatch):
     monkeypatch.setattr(
         rss.feedparser,
