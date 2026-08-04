@@ -79,6 +79,10 @@ class RSSFeedStoryProvider(StoryProvider):
             # html.unescape() pass cleans that up before it reaches skip/accept title matching or
             # becomes the headline. A title with no entities at all is unaffected (unescape is a
             # no-op then), so this is safe across every feed, not just the double-encoded ones.
+            #
+            # FORK-ONLY - do not upstream this to j6k4m8/goosepaper as a PR: it's a workaround for
+            # one specific misbehaving feed, not a general goosepaper bug (see README.md's "Fork-
+            # only fixes" note). Likely temporary until The Verge fixes their own feed generation.
             if "title" in entry:
                 entry["title"] = html.unescape(entry["title"])
 

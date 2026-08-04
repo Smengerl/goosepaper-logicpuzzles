@@ -20,6 +20,17 @@
 >
 > Each branch's own commit message has the full rationale and, where relevant, how it was
 > verified (test suite + real PDF renders).
+>
+> **Fork-only fixes - never stage these as a PR branch:** some `mainline` commits exist purely
+> to work around one specific misbehaving upstream data source, not a general goosepaper bug -
+> opening a PR for them would misrepresent the fix as something every goosepaper user needs.
+>
+> - `storyprovider/rss.py`'s `html.unescape()` pass on RSS `<title>` (commit `dbd4a08`): The
+>   Verge's feed serves titles with entities double-encoded in the raw XML
+>   (`AMD&amp;#8217;s ...`) - a bug in their feed generation, not something the RSS 2.0 spec
+>   expects consumers to handle, and likely temporary until they fix it on their end. Exotic
+>   enough (only reproduced against this one feed so far) that it doesn't belong upstream like
+>   the fixes in the table above.
 
 <p align=center><img align=center src='https://raw.githubusercontent.com/j6k4m8/goosepaper/master/docs/goose.svg' width=600 /></p>
 <h6 align=center>a daily newsfeed delivered to your remarkable tablet</h6>
