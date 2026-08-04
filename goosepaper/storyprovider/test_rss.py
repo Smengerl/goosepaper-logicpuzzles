@@ -90,6 +90,30 @@ def test_rss_provider_prefers_embedded_feed_content(monkeypatch):
     assert stories[0].byline == "example.com"
 
 
+def test_rss_provider_unescapes_double_encoded_title_entities(monkeypatch):
+    # Real-world case: The Verge's feed serves "AMD&#8217;s ..." literally - feedparser's own
+    # XML-entity decoding correctly leaves that alone (it's plain text after that pass, not a
+    # second entity layer to decode), so without an explicit html.unescape() the headline would
+    # show the literal "&#8217;" instead of an apostrophe.
+    monkeypatch.setattr(
+        rss.feedparser,
+        "parse",
+        lambda _: SimpleNamespace(
+            entries=[
+                _feed_entry(
+                    title="AMD&#8217;s datacenter business is booming",
+                    content=[rss.feedparser.FeedParserDict({"value": "<p>Body</p>"})],
+                )
+            ]
+        ),
+    )
+
+    provider = rss.RSSFeedStoryProvider("https://example.com/feed.xml")
+    stories = provider.get_stories()
+
+    assert stories[0].headline == "AMD’s datacenter business is booming"
+
+
 def test_rss_provider_summary_mode_uses_feed_summary(monkeypatch):
     monkeypatch.setattr(
         rss.feedparser,

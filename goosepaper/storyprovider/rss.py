@@ -1,4 +1,5 @@
 import datetime
+import html
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
@@ -72,6 +73,15 @@ class RSSFeedStoryProvider(StoryProvider):
 
         stories = []
         for entry in feed.entries:
+            # Some feeds (e.g. The Verge) double-encode entities in <title> - feedparser's own
+            # XML-entity decoding leaves a literal "&#8217;" behind instead of a real apostrophe,
+            # since that's correct per spec (it only decodes one layer); a second, plain-text
+            # html.unescape() pass cleans that up before it reaches skip/accept title matching or
+            # becomes the headline. A title with no entities at all is unaffected (unescape is a
+            # no-op then), so this is safe across every feed, not just the double-encoded ones.
+            if "title" in entry:
+                entry["title"] = html.unescape(entry["title"])
+
             if should_skip_title(entry.get("title", ""), self.skip_title_patterns):
                 continue
             if not should_accept_title(entry.get("title", ""), self.accept_title_patterns):
