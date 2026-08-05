@@ -190,6 +190,8 @@ RSS sources can filter along two independent axes - what to match (title or fetc
 
 RSS sources can also set `min_body_text_length` and/or `max_body_text_length` (both optional, applied after the content filters above) to drop stories whose extracted body's visible text length falls outside that range - `min_body_text_length` catches a failed extraction (a near-empty body), and `max_body_text_length` catches the opposite: an article whose body is implausibly long (e.g. a hardware review with a huge photo gallery/spec dump), which would otherwise balloon a single entry into the bulk of the whole paper.
 
+Any source can also set `"section": "Tech"` to render its stories grouped under that heading, alongside every other source sharing the same section name - useful once a paper mixes several feeds and you want them organized into named groups rather than one flat run of stories. A source with no `"section"` renders ungrouped, same as today.
+
 Delivery still happens only when you pass `--deliver`. If you want user-level delivery defaults, create `~/.config/goosepaper/config.json`:
 
 ```json
