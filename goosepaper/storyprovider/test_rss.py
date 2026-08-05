@@ -41,6 +41,7 @@ class _FakeResponse:
         encoding="utf-8",
         apparent_encoding="utf-8",
         headers=None,
+        url="https://example.com/story",
     ):
         self.ok = ok
         self.content = content
@@ -48,6 +49,7 @@ class _FakeResponse:
         self.apparent_encoding = apparent_encoding
         self.headers = headers or {}
         self._text_override = text
+        self.url = url
 
     @property
     def text(self):
@@ -445,6 +447,63 @@ class TestStripDuplicateLeadingHeading:
     def test_noop_without_a_headline_or_body(self):
         assert rss._strip_duplicate_leading_heading("<h1>X</h1>", "") == "<h1>X</h1>"
         assert rss._strip_duplicate_leading_heading("", "Same Title") == ""
+
+    def test_does_not_leak_a_synthetic_body_wrapper(self):
+        # bs4's lxml parser always wraps a bare fragment in <html><body> internally; a naive
+        # str(soup.body) re-serialization would leave that <body> tag in the output even though
+        # the input never had one - regression test for exactly that.
+        result = rss._strip_duplicate_leading_heading(
+            "<h1>Same Title</h1><p>Body text.</p>", "Same Title"
+        )
+        assert "<body" not in result
+        assert result == "<p>Body text.</p>"
+
+
+class TestMakeUrlsAbsolute:
+    def test_resolves_a_root_relative_image_src(self):
+        # Matches a real failure seen in production: "Failed to load image at
+        # 'file:///assets/img/common/psylo-iOS-Default-1024x1024@1x.webp': ... No such file or
+        # directory" - goosepaper.py's to_pdf() uses the local filesystem cwd as base_url for the
+        # whole (multi-origin) newspaper document, so a root-relative URL from one story resolves
+        # against the wrong thing entirely unless it's already absolute by the time it gets there.
+        result = rss._make_urls_absolute(
+            '<img src="/assets/img/common/psylo-iOS-Default-1024x1024@1x.webp">',
+            "https://example.com/posts/some-article/",
+        )
+        assert (
+            result
+            == '<img src="https://example.com/assets/img/common/psylo-iOS-Default-1024x1024@1x.webp"/>'
+        )
+
+    def test_resolves_a_page_relative_link_href(self):
+        result = rss._make_urls_absolute(
+            '<a href="../other-post">link</a>', "https://example.com/posts/some-article/"
+        )
+        assert 'href="https://example.com/posts/other-post"' in result
+
+    def test_leaves_already_absolute_urls_alone(self):
+        html = '<img src="https://cdn.example.com/already-absolute.png"/>'
+        assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") == html
+
+    def test_leaves_data_uris_alone(self):
+        html = '<img src="data:image/png;base64,AAAA"/>'
+        assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") == html
+
+    def test_does_not_leak_a_synthetic_body_wrapper(self):
+        result = rss._make_urls_absolute(
+            '<img src="/x.png">', "https://example.com/posts/some-article/"
+        )
+        assert "<body" not in result
+
+    def test_noop_when_nothing_needed_absolutizing(self):
+        # No relative URLs present - returns the exact original string, not a re-serialized copy
+        # (avoids e.g. silently normalizing unrelated markup on every single story).
+        html = "<p>Just text, no links or images.</p>"
+        assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") is html
+
+    def test_noop_without_body_or_base_url(self):
+        assert rss._make_urls_absolute("<img src='/x.png'>", "") == "<img src='/x.png'>"
+        assert rss._make_urls_absolute("", "https://example.com/") == ""
 
 
 def test_rss_provider_falls_back_to_feed_summary_when_readability_fails(monkeypatch):

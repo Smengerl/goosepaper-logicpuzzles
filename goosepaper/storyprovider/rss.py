@@ -247,6 +247,7 @@ def _story_from_response(
         # own <title> is usually accurate, so let callers prefer it outright.
         headline = entry["title"] if prefer_feed_title else (doc.title() or entry["title"])
         body_html = doc.summary() or fallback_body_html
+        body_html = _make_urls_absolute(body_html, response.url)
         body_html = _strip_duplicate_leading_heading(body_html, headline)
     except Exception:
         headline = entry["title"]
@@ -326,9 +327,41 @@ def _strip_duplicate_leading_heading(body_html: str, headline: str) -> str:
         if not _heading_matches_headline(node.get_text(), headline):
             return body_html
         node.decompose()
-        return str(container)
+        # decode_contents(), not str(container): `container` came from `soup.body`, and bs4's
+        # lxml parser always wraps a fragment in a synthetic <html><body> - str()-ing it back
+        # would leave body_html wrapped in a literal <body> tag it never had before, nested
+        # inside whatever real <body>/<div> the caller later embeds it in.
+        return container.decode_contents()
 
     return body_html
+
+
+def _make_urls_absolute(body_html: str, base_url: str) -> str:
+    """Readability's extracted body_html can carry relative URLs straight from the source page's
+    own markup (`<img src="/assets/img/foo.webp">`, relative `<a href>`, ...). goosepaper renders
+    the whole newspaper - every story from every source, concatenated - as a single HTML document
+    with one `base_url` (see `Goosepaper.to_pdf`, which sets it to the local filesystem's `cwd` -
+    there's no single correct base for a multi-origin document), so a relative URL that arrives
+    this way resolves against the wrong thing and silently fails - images most visibly ("Failed
+    to load image at 'file:///assets/img/foo.webp': ... No such file or directory" in the log).
+    Absolutize against the article's own URL here, at extraction time, while that's still known
+    and correct for this specific story.
+    """
+    if not body_html or not base_url:
+        return body_html
+
+    soup = bs4.BeautifulSoup(body_html, "lxml")
+    container = soup.body or soup
+    changed = False
+    for tag_name, attr in (("img", "src"), ("source", "src"), ("a", "href")):
+        for node in container.find_all(tag_name):
+            value = node.get(attr)
+            if not value or value.startswith("data:") or urllib.parse.urlparse(value).netloc:
+                continue
+            node[attr] = urllib.parse.urljoin(base_url, value)
+            changed = True
+
+    return container.decode_contents() if changed else body_html
 
 
 def _entry_source(entry, feed_url: str) -> str:
