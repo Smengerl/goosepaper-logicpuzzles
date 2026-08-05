@@ -594,6 +594,8 @@ def _source_schema(source_type: str) -> Dict[str, Any]:
                 "skip_title_patterns",
                 "accept_content_filters",
                 "accept_title_patterns",
+                "min_body_text_length",
+                "max_body_text_length",
             },
         },
         "mastodon": {
@@ -713,6 +715,12 @@ def _validate_source_options(source_type: str, options: Dict[str, Any], index: i
             value, f"source #{index} accept_title_patterns"
         ),
         "comic_type": lambda value: _validate_comic_type(value, index),
+        "min_body_text_length": lambda value: _validate_positive_int(
+            value, f"source #{index} min_body_text_length"
+        ),
+        "max_body_text_length": lambda value: _validate_positive_int(
+            value, f"source #{index} max_body_text_length"
+        ),
     }
 
     for key, value in options.items():
