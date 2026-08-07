@@ -485,6 +485,20 @@ class TestMakeUrlsAbsolute:
         html = '<img src="https://cdn.example.com/already-absolute.png"/>'
         assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") == html
 
+    def test_resolves_a_protocol_relative_image_src(self):
+        # Regression test: matches a real failure seen in production - "Failed to load image at
+        # 'file://images.cgames.de/images/gamestar/290/foo.jpg': ... No such file or directory".
+        # A protocol-relative URL ("//host/path") parses with a netloc but no scheme, so an
+        # earlier version of this function's `urlparse(value).netloc` check mistook it for
+        # already-absolute and left it untouched - it then got resolved later against the
+        # newspaper's file:// base_url instead of the article's own https:// URL, producing a
+        # broken "file://host/path" URL.
+        result = rss._make_urls_absolute(
+            '<img src="//images.cgames.de/images/gamestar/290/foo.jpg">',
+            "https://www.gamestar.de/artikel/foo,123.html",
+        )
+        assert result == '<img src="https://images.cgames.de/images/gamestar/290/foo.jpg"/>'
+
     def test_leaves_data_uris_alone(self):
         html = '<img src="data:image/png;base64,AAAA"/>'
         assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") == html
