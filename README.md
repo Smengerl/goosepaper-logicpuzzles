@@ -232,21 +232,22 @@ Check out [this example PDF](https://github.com/j6k4m8/goosepaper/blob/master/do
 
 ## existing story providers ([want to write your own?](https://github.com/j6k4m8/goosepaper/blob/master/CONTRIBUTING.md))
 
--   [Wikipedia Top News / Current Events](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/wikipedia.py)
--   [Mastodon Toots](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/mastodon.py)
--   [Bluesky Posts](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/bluesky.py)
--   [Readwise Reader Documents](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/readwise.py)
--   [Weather](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/weather.py). These stories appear in the "ear" of the front page, just like a regular ol' newspaper
--   [RSS Feeds](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/rss.py)
--   [Reddit Subreddits](https://github.com/j6k4m8/goosepaper/blob/master/goosepaper/storyprovider/reddit.py)
--   [Logic Puzzles](goosepaper/storyprovider/puzzle.py) (this fork's addition - see below)
--   [Daily Comic Strips](goosepaper/storyprovider/comic.py) (this fork's addition - see below)
+-   [Custom text](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/storyprovider.py.md)
+-   [Wikipedia Top News / Current Events](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/wikipedia.py.md)
+-   [Mastodon Toots](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/mastodon.py.md)
+-   [Bluesky Posts](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/bluesky.py.md)
+-   [Readwise Reader Documents](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/readwise.py.md)
+-   [Weather](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/weather.py.md)
+-   [RSS Feeds](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/rss.py.md)
+-   [Reddit Subreddits](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/reddit.py.md)
+-   [Logic Puzzles](goosepaper/storyprovider/puzzle.py) - see below
+-   [Daily Comic Strips](https://github.com/j6k4m8/goosepaper/blob/master/docs/reference/storyprovider/comic.py.md)
 
 ## puzzle source options
 
-The `"puzzle"` source type (added by this fork) generates one or more logic puzzles - Sudoku,
-Binoxxo, Futoshiki, Kakuro, or Shikaku - and renders each as plain HTML/CSS (no images). Every
-puzzle's solution is collected separately and placed in the paper's appendix.
+The `"puzzle"` source type generates one or more logic puzzles - Sudoku, Binoxxo, Futoshiki,
+Kakuro, or Shikaku - and renders each as plain HTML/CSS (no images). Every puzzle's solution is
+collected separately and placed in the paper's appendix.
 
 ```json
 { "type": "puzzle", "puzzle_type": "sudoku", "difficulty": "hard", "count": 2, "explanation": "footer", "name": "Sudoku" }
@@ -261,40 +262,6 @@ puzzle's solution is collected separately and placed in the paper's appendix.
 | `seed` | optional | random | RNG seed, for reproducible generation. |
 | `explanation` | optional | `"none"` | `"none"`, `"inline"` (a short rules blurb repeated under every puzzle instance), `"footer"` (a real CSS footnote at the bottom of whichever page it lands on - one footnote per `puzzle_type` in the whole paper, with every instance of that type carrying its own small reference mark pointing at it), or `"appendix"` (one rules blurb per `puzzle_type`, grouped with the solutions at the end of the document). |
 | `name` | optional | none | Visible heading for this puzzle instance (and its solution, suffixed " - Lösung"). If omitted, no heading renders for the puzzle itself - only the enclosing section's own title identifies it. Useful when several different puzzle types share one section; redundant (and best left unset) when a section already covers exactly one type+difficulty. |
-
-## comic source options
-
-The `"comic"` source type (added by this fork) downloads today's strip of a daily comic and
-embeds it as a single image story. The fetch mechanism (page URL, request headers, and the
-`<img>` lookup) for each comic is ported from
-[evidlo/remarkable_news](https://github.com/evidlo/remarkable_news), which uses the same
-approach to push comics straight to a reMarkable's suspend screen.
-
-```json
-{ "type": "comic", "comic_type": "xkcd" }
-```
-
-| Option | Required? | Default | What it does |
-|---|---|---|---|
-| `comic_type` | **required** | - | One of `xkcd`, `cah` (Calvin and Hobbes), `garfield`. No default on purpose - a config that forgets it fails loudly instead of silently always fetching XKCD. |
-
-Every story's headline is a fixed, source-derived name - `"XKCD"`, `"Garfield"`, or
-`"Calvin and Hobbes"` - never the strip's own per-day title, and no byline is set. Two comic
-sources commonly sit in the same section (e.g. a "Comics" section with both `garfield` and
-`cah`); a byline or a per-day dynamic headline would just repeat the same source name the
-headline already shows, or produce a needlessly long heading - neither adds anything a reader
-can use for a comic, unlike a byline on an RSS article (which distinguishes otherwise-anonymous
-entries pulled from different feeds into one section).
-
-Notes per comic:
-
--   `xkcd`: the strip's real per-day title is still available via the embedded image's `alt`
-    attribute, and the mouseover joke text (XKCD's signature `title` attribute) still renders as
-    a caption under the image - only the *headline* is fixed to `"XKCD"`.
--   `cah`: gocomics.com requires browser-like request headers, or it blocks the request; those
-    are sent automatically. Its page URL is date-scoped (`.../calvinandhobbes/YYYY/MM/DD`), so
-    it always resolves to the current day's strip.
--   `garfield`: no title/caption is available on the source page.
 
 # More Questions, Infrequently Asked
 

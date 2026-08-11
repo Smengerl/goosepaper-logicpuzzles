@@ -6,6 +6,7 @@ from .util import (
     construct_story_providers_from_source_configs,
     construct_story_providers_from_config_dict,
     htmlize,
+    register_story_provider,
 )
 
 
@@ -50,6 +51,25 @@ def test_construct_story_providers_from_config_dict():
         ]
     )
     assert len(stories) == 2
+
+
+def test_register_story_provider_makes_a_custom_type_constructable():
+    class _DummyProvider:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def get_stories(self, limit: int = 1):
+            return []
+
+    register_story_provider(
+        "dummy_test_provider", _DummyProvider, required={"handle"}, optional={"limit"}
+    )
+    stories = construct_story_providers_from_source_configs(
+        [{"type": "dummy_test_provider", "handle": "goose", "limit": 3}]
+    )
+    assert len(stories) == 1
+    assert isinstance(stories[0], _DummyProvider)
+    assert stories[0].kwargs == {"handle": "goose", "limit": 3}
 
 
 def test_construct_story_providers_passes_rss_byline_option():
@@ -226,10 +246,11 @@ def test_construct_story_providers_passes_puzzle_options():
 
 def test_construct_story_providers_passes_comic_type_option():
     stories = construct_story_providers_from_source_configs(
-        [{"type": "comic", "comic_type": "garfield"}]
+        [{"type": "comic", "comic_type": "gocomics", "comic_name": "garfield"}]
     )
 
-    assert stories[0].comic_type == "garfield"
+    assert stories[0].comic_type == "gocomics"
+    assert stories[0].comic_name == "garfield"
 
 
 def test_construct_story_providers_wraps_source_with_section_from_dict():
