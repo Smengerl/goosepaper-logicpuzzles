@@ -512,8 +512,13 @@ class TestMakeUrlsAbsolute:
         assert 'href="https://example.com/posts/other-post"' in result
 
     def test_leaves_already_absolute_urls_alone(self):
-        html = '<img src="https://cdn.example.com/already-absolute.png"/>'
-        assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") == html
+        # Value is untouched; the self-closing "/>" is just lxml's normal serialization, applied
+        # unconditionally now (see test_strips_a_synthetic_html_body_wrapper_... below for why).
+        html = '<img src="https://cdn.example.com/already-absolute.png">'
+
+        result = rss._make_urls_absolute(html, "https://example.com/posts/some-article/")
+
+        assert result == '<img src="https://cdn.example.com/already-absolute.png"/>'
 
     def test_resolves_a_protocol_relative_image_src(self):
         # Regression test: matches a real failure seen in production - "Failed to load image at
@@ -530,8 +535,11 @@ class TestMakeUrlsAbsolute:
         assert result == '<img src="https://images.cgames.de/images/gamestar/290/foo.jpg"/>'
 
     def test_leaves_data_uris_alone(self):
-        html = '<img src="data:image/png;base64,AAAA"/>'
-        assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") == html
+        html = '<img src="data:image/png;base64,AAAA">'
+
+        result = rss._make_urls_absolute(html, "https://example.com/posts/some-article/")
+
+        assert result == '<img src="data:image/png;base64,AAAA"/>'
 
     def test_does_not_leak_a_synthetic_body_wrapper(self):
         result = rss._make_urls_absolute(
@@ -540,10 +548,33 @@ class TestMakeUrlsAbsolute:
         assert "<body" not in result
 
     def test_noop_when_nothing_needed_absolutizing(self):
-        # No relative URLs present - returns the exact original string, not a re-serialized copy
-        # (avoids e.g. silently normalizing unrelated markup on every single story).
+        # Content is unchanged (though re-serialized, not the exact same string object - see
+        # test_strips_a_synthetic_html_body_wrapper_even_with_nothing_to_absolutize below for why
+        # re-serializing unconditionally, not just when something changed, is required).
         html = "<p>Just text, no links or images.</p>"
-        assert rss._make_urls_absolute(html, "https://example.com/posts/some-article/") is html
+
+        result = rss._make_urls_absolute(html, "https://example.com/posts/some-article/")
+
+        assert result == html
+
+    def test_strips_a_synthetic_html_body_wrapper_even_with_nothing_to_absolutize(self):
+        """Regression test for the actual production bug: bs4's lxml parser wraps whatever it's
+        given in a synthetic <html><body> (readability's doc.summary() output already looks like
+        a full document, so lxml has no reason to treat it as a fragment). Stripping that wrapper
+        via decode_contents() must happen unconditionally - the original version of this function
+        only re-serialized when it actually rewrote a URL, so an article whose links/images were
+        already all absolute (common, not an edge case) leaked the wrapper straight into the
+        newspaper's assembled HTML verbatim. A second <html> tag appearing mid-document is enough
+        to confuse WeasyPrint's parser into silently dropping everything after it until it
+        resyncs - verified live: found 64 such leaks across one real edition, several immediately
+        preceding a story that vanished entirely from the rendered PDF."""
+        html = "<html><body><p>Already-absolute content, nothing to rewrite.</p></body></html>"
+
+        result = rss._make_urls_absolute(html, "https://example.com/posts/some-article/")
+
+        assert "<html>" not in result
+        assert "<body>" not in result
+        assert "Already-absolute content" in result
 
     def test_noop_without_body_or_base_url(self):
         assert rss._make_urls_absolute("<img src='/x.png'>", "") == "<img src='/x.png'>"
