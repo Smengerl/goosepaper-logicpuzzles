@@ -115,6 +115,12 @@ class RSSFeedStoryProvider(StoryProvider):
 
             if story is None:
                 continue
+            # Applied centrally here - not just for the readability-extracted "article" path
+            # (see _story_from_response) - so a leading duplicate of the headline (e.g. an
+            # RSS entry whose <content> or <summary> repeats the title as its own first line)
+            # can never inflate should_accept_content's regex match or the min/max
+            # visible_text_length check below with text that isn't actually story content.
+            story.body_html = _strip_duplicate_leading_heading(story.body_html, story.headline)
             if self.accept_content_filters:
                 if not should_accept_content(story.body_html, self.accept_content_filters):
                     continue
@@ -261,7 +267,8 @@ def _story_from_response(
         headline = entry["title"] if prefer_feed_title else (doc.title() or entry["title"])
         body_html = doc.summary() or fallback_body_html
         body_html = _make_urls_absolute(body_html, response.url)
-        body_html = _strip_duplicate_leading_heading(body_html, headline)
+        # Duplicate-heading stripping now happens once, centrally, in get_stories() - for every
+        # body_source path, not just this readability-extracted one.
     except Exception:
         headline = entry["title"]
         body_html = fallback_body_html
