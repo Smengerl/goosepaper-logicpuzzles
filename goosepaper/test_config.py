@@ -397,6 +397,78 @@ def test_load_paper_config_rejects_invalid_rss_body_source():
         )
 
 
+def test_load_paper_config_accepts_rss_prefer_feed_title():
+    with _TempWorkspace() as tmp_path:
+        config_path = tmp_path / "paper.json"
+        _write_json(
+            config_path,
+            {
+                "version": 2,
+                "paper": {"style": "FifthAvenue"},
+                "sources": [
+                    {
+                        "type": "rss",
+                        "url": "https://example.com/feed.xml",
+                        "prefer_feed_title": True,
+                    }
+                ],
+            },
+        )
+
+        config = load_paper_config(config_path)
+
+        assert config.sources[0].options["prefer_feed_title"] is True
+
+
+def test_load_paper_config_rejects_non_bool_rss_prefer_feed_title():
+    with _TempWorkspace() as tmp_path:
+        config_path = tmp_path / "paper.json"
+        _write_json(
+            config_path,
+            {
+                "version": 2,
+                "paper": {"style": "FifthAvenue"},
+                "sources": [
+                    {
+                        "type": "rss",
+                        "url": "https://example.com/feed.xml",
+                        "prefer_feed_title": "yes",
+                    }
+                ],
+            },
+        )
+
+        _assert_config_error(
+            lambda: load_paper_config(config_path),
+            "prefer_feed_title must be true or false",
+        )
+
+
+def test_load_paper_config_accepts_registered_source():
+    from .util import register_story_provider
+
+    register_story_provider(
+        "dummy_cfg_provider", object, required={"handle"}, optional={"limit"}
+    )
+    with _TempWorkspace() as tmp_path:
+        config_path = tmp_path / "paper.json"
+        _write_json(
+            config_path,
+            {
+                "version": 2,
+                "paper": {"style": "FifthAvenue"},
+                "sources": [
+                    {"type": "dummy_cfg_provider", "handle": "goose", "limit": 2}
+                ],
+            },
+        )
+
+        config = load_paper_config(config_path)
+
+        assert config.sources[0].type == "dummy_cfg_provider"
+        assert config.sources[0].options == {"handle": "goose", "limit": 2}
+
+
 def test_load_paper_config_accepts_all_content_filter_and_length_fields():
     """Happy-path smoke test for all six filter/length fields at once. The `rejects_*` tests below
     already exercise every validation branch individually (unknown type, missing
