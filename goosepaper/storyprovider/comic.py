@@ -18,6 +18,7 @@ strips on each site before relying on it - see the module's test suite and PR hi
 
 from __future__ import annotations
 
+import base64
 import datetime
 import json
 from dataclasses import dataclass, field
@@ -28,19 +29,9 @@ import requests
 from lxml import html as lxml_html
 
 from ..story import Story
-from .imageutil import reencode_image_as_data_uri
 from .storyprovider import StoryProvider
 
 _DEFAULT_TIMEOUT = 20
-
-# Some sources (gocomics.com's CDN in particular) serve a source-agnostic "print" resolution
-# far beyond anything a newspaper page needs (observed: 2800px wide). At that size, the
-# resulting base64 data: URI approaches multi-MB territory; embedded alongside the hundreds
-# of other images in a full newspaper, that was enough to make WeasyPrint silently drop the
-# story's entire content with no error. Capping the long edge here keeps every comic embed in
-# the same reasonable size range as a typical article thumbnail, regardless of what resolution
-# the source happens to serve today.
-_MAX_IMAGE_DIMENSION = 1200
 
 # How many days to step backwards for a date-scoped source (gocomics.com) if the requested day's
 # strip isn't up yet. Generation can run at any hour, and the source's own rollover time/timezone
@@ -173,28 +164,23 @@ class DailyComicStoryProvider(StoryProvider):
     `_ComicSource` entry covers every comic on that site, so there's no per-comic label to
     hardcode.
 
-    The strip image itself is downloaded and inlined as a base64 `data:` URI rather than linked
-    by remote URL, for two reasons: (1) gocomics.com requires the same browser-like headers for
-    the *image* request as for the page request, and WeasyPrint (which fetches `<img src>` URLs
-    itself while rendering the PDF) has no way to attach them; (2) it makes the rendered PDF
+    The strip image itself is downloaded here and inlined as a base64 `data:` URI rather than
+    linked by remote URL, for two reasons that are specific to *this* fetch and can't move
+    anywhere else: (1) gocomics.com requires the same browser-like headers for the *image*
+    request as for the page request, and nothing downstream of this provider (WeasyPrint, or a
+    generic later re-encode pass) has any way to attach them; (2) it makes the rendered PDF
     self-contained - regenerating or re-delivering it later doesn't depend on the strip's image
     URL still being reachable.
 
-    Before embedding, the fetched bytes are decoded and re-encoded as a clean, size-capped JPEG
-    via `imageutil.reencode_image_as_data_uri` - the same "decode, then adjust, then re-encode"
-    pipeline remarkable_news's own Go tool runs (imaging.Decode + resize + imaging.Save with
-    JPEGQuality). This isn't optional: embedding a source image unmodified - at whatever
-    resolution, color mode/metadata, and *format* the source happened to serve that day - was
-    reproduced to make WeasyPrint's PDF image embedding silently drop the *entire* story: no
-    exception, no log line, just an empty gap where the story should have been, in an otherwise
-    fully-rendered multi-hundred-page document. Three contributing factors were identified, all
-    addressed by imageutil's re-encode step (see its own module docstring for the general case):
-    (1) gocomics.com's CDN can serve a strip at print resolution (2800px+ wide) with no smaller
-    variant requested; (2) even at a source's *default* resolution, a lossless PNG re-encode of a
-    dithered/gradient-heavy color strip is several times larger than the same content as JPEG;
-    (3) arcamax.com's Garfield JPEGs ship CMYK-mode pixel data with a large embedded
-    Photoshop/ICC metadata block. Any of these, combined with the hundreds of other images
-    already in a full newspaper, was enough to trigger the failure.
+    EXPERIMENT (render-time image sizing): unlike an earlier version of this provider, the fetched
+    bytes are embedded here *as-is* (original format, resolution, color mode - whatever the
+    source served), not decoded/re-encoded through Pillow. That normalization step (bounding
+    dimensions, fixing color mode, always emitting JPEG - see imageutil.py's module docstring for
+    why it's needed at all) now happens once, centrally, in Goosepaper._render_html_document(),
+    which sizes every embedded image - from any story provider, not just this one - off the
+    actual page_profile/layout being rendered instead of a guessed constant. This provider's job
+    is now only the parts a generic image pass can't do itself: the authenticated fetch, and
+    picking which URL is the actual strip.
     """
 
     def __init__(
@@ -286,7 +272,11 @@ class DailyComicStoryProvider(StoryProvider):
         )
         image_response.raise_for_status()
 
-        data_uri = reencode_image_as_data_uri(image_response.content, _MAX_IMAGE_DIMENSION)
+        # Raw bytes, original format/resolution - see get_stories()'s docstring "EXPERIMENT"
+        # note: sizing/format normalization happens later, centrally, in _render_html_document().
+        content_type = image_response.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+        raw_b64 = base64.b64encode(image_response.content).decode("ascii")
+        data_uri = f"data:{content_type};base64,{raw_b64}"
 
         alt_text = escape(label)
         body_html = f'<img class="comic-strip" src="{data_uri}" alt="{alt_text}" />'

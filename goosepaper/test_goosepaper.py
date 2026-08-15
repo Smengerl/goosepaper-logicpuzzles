@@ -1,13 +1,54 @@
+import base64
+import io
 import warnings
 
 import pytest
+from PIL import Image
 
-from .goosepaper import Goosepaper, _bookmark_css
+from . import goosepaper as goosepaper_module
+from .goosepaper import Goosepaper, _bookmark_css, _image_max_dimension, _inline_story_images
 from .story import Story
-from .styles import Style
+from .styles import PageProfile, Style
 from .util import PlacementPreference
 
 from .storyprovider.storyprovider import LoremStoryProvider
+
+
+def _image_bytes(fmt: str, mode: str = "RGB", size=(4, 3), color=(200, 50, 10)) -> bytes:
+    image = Image.new(mode, size, color if mode != "L" else 128)
+    buffer = io.BytesIO()
+    image.save(buffer, format=fmt)
+    return buffer.getvalue()
+
+
+def _decode_data_uri_image(html: str) -> Image.Image:
+    prefix = "data:image/jpeg;base64,"
+    start = html.index(prefix) + len(prefix)
+    end = html.index('"', start)
+    return Image.open(io.BytesIO(base64.b64decode(html[start:end])))
+
+
+class _FakeResponse:
+    def __init__(self, content: bytes, headers: dict = None, ok: bool = True):
+        self.content = content
+        self.headers = headers or {}
+        self._ok = ok
+
+    def raise_for_status(self):
+        if not self._ok:
+            raise RuntimeError("boom")
+
+
+class _FixedBodyProvider:
+    """A minimal story provider for image-inlining tests - LoremStoryProvider has no way to set
+    a custom body_html."""
+
+    def __init__(self, body_html: str, headline: str = "Fixed"):
+        self.body_html = body_html
+        self.headline = headline
+
+    def get_stories(self):
+        return [Story(headline=self.headline, body_html=self.body_html)]
 
 
 def test_can_create_goosepaper_with_no_providers():
@@ -330,3 +371,153 @@ def test_bookmark_css_does_not_warn_when_levels_differ_or_are_none():
             headline_bookmark_level=None,
             body_heading_bookmarks=False,
         )
+
+
+# --- EXPERIMENT (render-time image sizing): _image_max_dimension / _inline_story_images --------
+
+
+def test_image_max_dimension_shrinks_with_more_columns():
+    profile = PageProfile(
+        name="test",
+        size="10in 12in",
+        margin_top="0in",
+        margin_right="0in",
+        margin_bottom="0in",
+        margin_left="0in",
+        max_auto_columns=3,
+    )
+    one_col = _image_max_dimension(profile, effective_columns=1)
+    two_col = _image_max_dimension(profile, effective_columns=2)
+    # 10in content width at 200 DPI = 2000px for 1 column, 1000px for 2 columns.
+    assert one_col == 2000
+    assert two_col == 1000
+
+
+def test_image_max_dimension_accounts_for_margins_and_mm_units():
+    profile = PageProfile(
+        name="a4-like",
+        size="210mm 297mm",
+        margin_top="10mm",
+        margin_right="10mm",
+        margin_bottom="10mm",
+        margin_left="10mm",
+        max_auto_columns=1,
+    )
+    # (210mm - 20mm) / 25.4 = 7.48in content width, * 200 DPI.
+    assert _image_max_dimension(profile, effective_columns=1) == round(190 / 25.4 * 200)
+
+
+def test_image_max_dimension_never_goes_below_the_floor():
+    tiny_profile = PageProfile(
+        name="tiny",
+        size="1in 1in",
+        margin_top="0.4in",
+        margin_right="0.4in",
+        margin_bottom="0.4in",
+        margin_left="0.4in",
+        max_auto_columns=1,
+    )
+    assert _image_max_dimension(tiny_profile, effective_columns=1) == 400
+
+
+def test_image_max_dimension_falls_back_on_unparseable_size():
+    bad_profile = PageProfile(
+        name="bad",
+        size="huge",
+        margin_top="0in",
+        margin_right="0in",
+        margin_bottom="0in",
+        margin_left="0in",
+        max_auto_columns=1,
+    )
+    assert _image_max_dimension(bad_profile, effective_columns=1) == 1200
+
+
+def test_inline_story_images_fetches_and_normalizes_a_remote_http_image(monkeypatch):
+    fake_png = _image_bytes("PNG", size=(50, 40))
+    seen_urls = []
+
+    def fake_get(url, *, headers, timeout):
+        seen_urls.append(url)
+        return _FakeResponse(fake_png)
+
+    monkeypatch.setattr(goosepaper_module.requests, "get", fake_get)
+
+    result = _inline_story_images(
+        '<p>hi</p><img src="https://example.com/photo.png">', max_dimension=20
+    )
+
+    assert seen_urls == ["https://example.com/photo.png"]
+    assert "data:image/jpeg;base64," in result
+    assert "https://example.com/photo.png" not in result
+    embedded = _decode_data_uri_image(result)
+    assert max(embedded.size) == 20  # capped to max_dimension, aspect preserved
+
+
+def test_inline_story_images_re_encodes_an_already_inlined_data_uri(monkeypatch):
+    """Covers the comic-provider case: comic.py now embeds the source's raw, unprocessed bytes
+    as a data: URI (see comic.py's get_stories() docstring) - the CMYK/oversized/format-fixup
+    normalization that used to happen inside comic.py must still happen here, on data: sources
+    too, not just remote http(s) ones."""
+
+    def fail_get(*args, **kwargs):
+        raise AssertionError("requests.get should not run for an already-inlined image")
+
+    monkeypatch.setattr(goosepaper_module.requests, "get", fail_get)
+
+    fake_cmyk_jpeg = _image_bytes("JPEG", mode="CMYK", size=(8, 8))
+    src = f"data:image/jpeg;base64,{base64.b64encode(fake_cmyk_jpeg).decode('ascii')}"
+    result = _inline_story_images(f'<img src="{src}">', max_dimension=1200)
+
+    embedded = _decode_data_uri_image(result)
+    assert embedded.format == "JPEG"
+    assert embedded.mode in ("RGB", "L")
+
+
+def test_inline_story_images_leaves_a_failing_image_untouched(monkeypatch):
+    def fake_get(url, *, headers, timeout):
+        raise RuntimeError("network's down")
+
+    monkeypatch.setattr(goosepaper_module.requests, "get", fake_get)
+
+    html = '<img src="https://example.com/broken.jpg">'
+    assert _inline_story_images(html, max_dimension=1200) == html
+
+
+def test_inline_story_images_skips_relative_and_missing_src():
+    html = '<img src="/relative.jpg"><img>'
+    assert _inline_story_images(html, max_dimension=1200) == html
+
+
+def test_render_html_document_inlines_images_from_any_story_provider(monkeypatch):
+    """The whole point of the experiment: image inlining now applies uniformly to every story
+    provider (a plain Story with an <img>, not just RSS/comic), because it happens once here
+    rather than being opt-in per provider."""
+    fake_png = _image_bytes("PNG", size=(50, 40))
+    monkeypatch.setattr(
+        goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(fake_png)
+    )
+
+    provider = _FixedBodyProvider('<img src="https://example.com/photo.png">')
+    g = Goosepaper([provider])
+
+    html = g.to_html(page_profile="remarkable2", layout="1col")
+
+    assert "data:image/jpeg;base64," in html
+    assert "https://example.com/photo.png" not in html
+
+
+def test_render_html_document_sizes_images_smaller_for_a_smaller_page_profile(monkeypatch):
+    fake_png = _image_bytes("PNG", size=(3000, 2000))
+    monkeypatch.setattr(
+        goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(fake_png)
+    )
+
+    small_html = Goosepaper([_FixedBodyProvider('<img src="https://example.com/p.png">')]).to_html(
+        page_profile="paper_pro_move", layout="1col"
+    )
+    large_html = Goosepaper([_FixedBodyProvider('<img src="https://example.com/p.png">')]).to_html(
+        page_profile="letter", layout="1col"
+    )
+
+    assert max(_decode_data_uri_image(small_html).size) < max(_decode_data_uri_image(large_html).size)

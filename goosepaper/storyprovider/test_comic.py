@@ -2,6 +2,7 @@ import base64
 import datetime
 import io
 import json
+import re
 
 import pytest
 from PIL import Image
@@ -57,10 +58,12 @@ def _image_bytes(fmt: str, mode: str = "RGB", size=(4, 3), color=(200, 50, 10)) 
 
 
 def _decode_data_uri_image(body_html: str) -> Image.Image:
-    prefix = "data:image/jpeg;base64,"
-    start = body_html.index(prefix) + len(prefix)
-    end = body_html.index('"', start)
-    payload = base64.b64decode(body_html[start:end])
+    """EXPERIMENT (render-time image sizing): comic.py no longer re-encodes through Pillow, so
+    the embedded data: URI keeps the source's own mime type (png/gif/jpeg/...), not always
+    image/jpeg - the prefix is matched generically rather than hardcoded."""
+    match = re.search(r'src="data:image/\w+;base64,([^"]+)"', body_html)
+    assert match, f"no embedded data: image found in {body_html!r}"
+    payload = base64.b64decode(match.group(1))
     return Image.open(io.BytesIO(payload))
 
 
@@ -240,13 +243,12 @@ def test_arcamax_derives_label_for_a_different_comic_without_any_code_change(mon
     assert stories[0].headline == "Beetle Bailey"
 
 
-def test_cmyk_jpeg_is_converted_to_rgb_jpeg(monkeypatch):
-    """Regression test: arcamax.com serves Garfield as a CMYK JPEG with a large embedded
-    Photoshop/ICC metadata block. Passing those bytes through to WeasyPrint unmodified made it
-    silently drop the *entire* story - no exception, no image, no text, nothing in the rendered
-    PDF - while every other story in the same document rendered fine. Decoding and re-encoding
-    through Pillow (see get_stories()'s docstring) must always produce a plain RGB/L JPEG,
-    regardless of the source image's color mode."""
+def test_strip_image_is_embedded_unmodified_at_source_format_and_resolution(monkeypatch):
+    """EXPERIMENT (render-time image sizing): this provider no longer decodes/re-encodes through
+    Pillow (dimension capping, CMYK->RGB, transparency compositing) - that now happens once,
+    centrally, in Goosepaper._render_html_document(), and is tested there / in
+    test_imageutil.py's direct tests of reencode_image_as_data_uri. This provider's own
+    responsibility ends at embedding whatever bytes/format/resolution the source served."""
     fake_cmyk_jpeg = _image_bytes("JPEG", mode="CMYK", size=(8, 8))
 
     def fake_get(url, *, headers, timeout):
@@ -261,66 +263,8 @@ def test_cmyk_jpeg_is_converted_to_rgb_jpeg(monkeypatch):
 
     assert "data:image/jpeg;base64," in stories[0].body_html
     embedded = _decode_data_uri_image(stories[0].body_html)
-    assert embedded.format == "JPEG"
-    assert embedded.mode in ("RGB", "L")
-
-
-def test_transparent_source_image_is_composited_onto_white(monkeypatch):
-    """Regression test: Pillow's convert("RGB") does not composite transparent pixels against
-    anything - it just drops the alpha channel and keeps whatever RGB value was stored
-    underneath, which can leave visible phantom colors where transparency was meant to show
-    through (verified directly against Pillow: a semi-transparent black RGBA pixel converts to
-    solid black, not white, and a GIF-style transparency-color-keyed pixel converts to its own
-    (arbitrarily-colored) palette entry, not white). A comic strip with any transparency must be
-    composited onto white before the alpha channel is dropped - the newspaper page underneath is
-    always white in every bundled goosepaper style."""
-    fake_png = io.BytesIO()
-    rgba = Image.new("RGBA", (2, 2), (255, 255, 255, 0))  # fully transparent white
-    rgba.putpixel((0, 0), (0, 0, 0, 255))  # opaque black - must stay black
-    rgba.putpixel((1, 1), (10, 20, 30, 0))  # fully transparent, garbage RGB - must become white
-    rgba.save(fake_png, format="PNG")
-    fake_png_bytes = fake_png.getvalue()
-
-    def fake_get(url, *, headers, timeout):
-        if url == "https://xkcd.com":
-            return _FakeResponse(_XKCD_HTML)
-        return _FakeResponse(fake_png_bytes, headers={"Content-Type": "image/png"})
-
-    monkeypatch.setattr(comic.requests, "get", fake_get)
-
-    provider = comic.DailyComicStoryProvider(comic_type="xkcd")
-    stories = provider.get_stories()
-
-    embedded = _decode_data_uri_image(stories[0].body_html)
-    assert embedded.mode == "RGB"
-    assert embedded.getpixel((0, 0)) == (0, 0, 0)
-    assert embedded.getpixel((1, 1)) == (255, 255, 255)
-
-
-def test_oversized_source_image_is_downscaled(monkeypatch):
-    """Regression test: gocomics.com's CDN can serve a strip at print resolution (observed:
-    2800px wide) with no smaller variant requested. Combined with the hundreds of other images
-    already in a full newspaper, the resulting near-1MB base64 payload for a single story was
-    reproduced to make WeasyPrint silently drop that story's entire content. Every embedded
-    comic must be capped to comic._MAX_IMAGE_DIMENSION on its long edge, regardless of source
-    resolution."""
-    oversized = _image_bytes("PNG", size=(2800, 2000))
-
-    def fake_get(url, *, headers, timeout):
-        if url == "https://xkcd.com":
-            return _FakeResponse(_XKCD_HTML)
-        return _FakeResponse(oversized, headers={"Content-Type": "image/png"})
-
-    monkeypatch.setattr(comic.requests, "get", fake_get)
-
-    provider = comic.DailyComicStoryProvider(comic_type="xkcd")
-    stories = provider.get_stories()
-
-    embedded = _decode_data_uri_image(stories[0].body_html)
-    assert max(embedded.size) == comic._MAX_IMAGE_DIMENSION
-    # Aspect ratio preserved: 2800x2000 is 1.4:1, so the capped long edge (width) implies a
-    # short edge (height) of 1200 / 1.4.
-    assert embedded.size == (1200, int(2000 * 1200 / 2800))
+    assert embedded.mode == "CMYK"
+    assert embedded.size == (8, 8)
 
 
 def test_missing_strip_image_raises_informative_error(monkeypatch):
