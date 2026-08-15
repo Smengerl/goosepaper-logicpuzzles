@@ -508,6 +508,31 @@ def test_render_html_document_inlines_images_from_any_story_provider(monkeypatch
     assert "https://example.com/photo.png" not in html
 
 
+def test_render_html_document_isolates_a_failing_storys_image_inlining(monkeypatch):
+    """A failure processing one story's images must not take the whole render down with it -
+    the deleted rss.py call site used to guarantee this per-story; _render_html_document()'s own
+    loop needs the same guarantee now that it runs for every story instead of just RSS ones."""
+    real_inline_story_images = goosepaper_module._inline_story_images
+
+    def flaky_inline_story_images(body_html, max_dimension):
+        if "boom" in body_html:
+            raise RuntimeError("simulated parse failure")
+        return real_inline_story_images(body_html, max_dimension)
+
+    monkeypatch.setattr(goosepaper_module, "_inline_story_images", flaky_inline_story_images)
+
+    broken = _FixedBodyProvider("<p>boom</p>", headline="Broken story")
+    fine = _FixedBodyProvider("<p>All good</p>", headline="Fine story")
+    g = Goosepaper([broken, fine])
+
+    html = g.to_html()
+
+    assert "Broken story" in html
+    assert "<p>boom</p>" in html
+    assert "Fine story" in html
+    assert "<p>All good</p>" in html
+
+
 def test_render_html_document_sizes_images_smaller_for_a_smaller_page_profile(monkeypatch):
     fake_png = _image_bytes("PNG", size=(3000, 2000))
     monkeypatch.setattr(

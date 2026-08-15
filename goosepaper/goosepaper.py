@@ -238,7 +238,12 @@ class Goosepaper:
             style_obj.get_page_profile(page_profile), effective_columns
         )
         for story in stories:
-            story.body_html = _inline_story_images(story.body_html, image_max_dimension)
+            try:
+                story.body_html = _inline_story_images(story.body_html, image_max_dimension)
+            except Exception as err:
+                print(
+                    f"Sad honk :/ Couldn't process images for {story.headline!r}: {err}"
+                )
 
         ears = [
             story
