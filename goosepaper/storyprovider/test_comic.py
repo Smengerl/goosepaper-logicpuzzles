@@ -58,9 +58,9 @@ def _image_bytes(fmt: str, mode: str = "RGB", size=(4, 3), color=(200, 50, 10)) 
 
 
 def _decode_data_uri_image(body_html: str) -> Image.Image:
-    """EXPERIMENT (render-time image sizing): comic.py no longer re-encodes through Pillow, so
-    the embedded data: URI keeps the source's own mime type (png/gif/jpeg/...), not always
-    image/jpeg - the prefix is matched generically rather than hardcoded."""
+    """comic.py embeds the source's own mime type (png/gif/jpeg/...), not always image/jpeg -
+    since it no longer re-encodes through Pillow itself - so the prefix is matched generically
+    rather than hardcoded."""
     match = re.search(r'src="data:image/\w+;base64,([^"]+)"', body_html)
     assert match, f"no embedded data: image found in {body_html!r}"
     payload = base64.b64decode(match.group(1))
@@ -244,11 +244,11 @@ def test_arcamax_derives_label_for_a_different_comic_without_any_code_change(mon
 
 
 def test_strip_image_is_embedded_unmodified_at_source_format_and_resolution(monkeypatch):
-    """EXPERIMENT (render-time image sizing): this provider no longer decodes/re-encodes through
-    Pillow (dimension capping, CMYK->RGB, transparency compositing) - that now happens once,
-    centrally, in Goosepaper._render_html_document(), and is tested there / in
-    test_imageutil.py's direct tests of reencode_image_as_data_uri. This provider's own
-    responsibility ends at embedding whatever bytes/format/resolution the source served."""
+    """This provider only verifies the fetched bytes decode as *some* image (see
+    get_stories()'s docstring) - it doesn't resize/re-encode them (dimension capping, CMYK->RGB,
+    transparency compositing). That normalization happens once, centrally, in
+    Goosepaper._render_html_document(), and is tested there / in test_imageutil.py's direct
+    tests of reencode_image_as_data_uri."""
     fake_cmyk_jpeg = _image_bytes("JPEG", mode="CMYK", size=(8, 8))
 
     def fake_get(url, *, headers, timeout):
@@ -275,6 +275,27 @@ def test_missing_strip_image_raises_informative_error(monkeypatch):
 
     provider = comic.DailyComicStoryProvider(comic_type="xkcd")
     with pytest.raises(RuntimeError, match="Could not find today's strip"):
+        provider.get_stories()
+
+
+def test_undecodable_strip_response_raises_instead_of_embedding_garbage(monkeypatch):
+    """Regression test: this provider no longer resizes/re-encodes the strip through Pillow
+    (that moved to Goosepaper._render_html_document(), see get_stories()'s docstring), but it
+    must still catch a response that isn't a real image at all - e.g. an anti-bot HTML
+    interstitial served with HTTP 200 instead of the strip - and raise, exactly like the old
+    unconditional Pillow decode used to. Without this check, get_stories() would silently
+    succeed with a Story whose "image" is unrenderable garbage instead of the provider's own
+    per-comic story being cleanly dropped by Goosepaper.get_stories()'s top-level try/except."""
+
+    def fake_get(url, *, headers, timeout):
+        if url == "https://xkcd.com":
+            return _FakeResponse(_XKCD_HTML)
+        return _FakeResponse(b"<html><body>Access denied</body></html>")
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    provider = comic.DailyComicStoryProvider(comic_type="xkcd")
+    with pytest.raises(RuntimeError, match="isn't a decodable image"):
         provider.get_stories()
 
 

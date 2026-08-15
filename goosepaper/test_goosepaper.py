@@ -11,7 +11,7 @@ from .story import Story
 from .styles import PageProfile, Style
 from .util import PlacementPreference
 
-from .storyprovider import readwise
+from .storyprovider import comic, readwise
 from .storyprovider.storyprovider import LoremStoryProvider
 
 
@@ -374,7 +374,7 @@ def test_bookmark_css_does_not_warn_when_levels_differ_or_are_none():
         )
 
 
-# --- EXPERIMENT (render-time image sizing): _image_max_dimension / _inline_story_images --------
+# --- Render-time image sizing: _image_max_dimension / _inline_story_images ---------------------
 
 
 def test_image_max_dimension_shrinks_with_more_columns():
@@ -490,10 +490,34 @@ def test_inline_story_images_skips_relative_and_missing_src():
     assert _inline_story_images(html, max_dimension=1200) == html
 
 
+def test_inline_story_images_preserves_a_leading_style_block(monkeypatch):
+    """Regression test for the real shape comic.py's body_html has: a bare <style> tag followed
+    by a <div>, not wrapped in any container (see comic._COMIC_CSS + get_stories()). lxml
+    relocates a body-level <style> into an implied <head>, separate from the <body> content
+    _inline_story_images serializes - without explicitly preserving that head content, the CSS
+    would silently vanish the moment an image in the same body_html gets inlined."""
+    fake_png = _image_bytes("PNG", size=(10, 8))
+    monkeypatch.setattr(
+        goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(fake_png)
+    )
+
+    body_html = (
+        comic._COMIC_CSS
+        + '<div class="comic-strip-body">'
+        + '<img class="comic-strip" src="https://example.com/strip.png" alt="XKCD" />'
+        + "</div>"
+    )
+
+    result = _inline_story_images(body_html, max_dimension=1200)
+
+    assert ".comic-strip-body { text-align: center; }" in result
+    assert "data:image/jpeg;base64," in result
+    assert "https://example.com/strip.png" not in result
+
+
 def test_render_html_document_inlines_images_from_any_story_provider(monkeypatch):
-    """The whole point of the experiment: image inlining now applies uniformly to every story
-    provider (a plain Story with an <img>, not just RSS/comic), because it happens once here
-    rather than being opt-in per provider."""
+    """Image inlining applies uniformly to every story provider (a plain Story with an <img>,
+    not just RSS/comic), because it happens once here rather than being opt-in per provider."""
     fake_png = _image_bytes("PNG", size=(50, 40))
     monkeypatch.setattr(
         goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(fake_png)
@@ -551,19 +575,16 @@ def test_render_html_document_sizes_images_smaller_for_a_smaller_page_profile(mo
 
 def test_render_html_document_inlines_images_from_a_real_readwise_story(monkeypatch):
     """Goes one step further than the synthetic-provider test above: Mastodon/Bluesky/Reddit
-    were checked directly (grep + a live, unauthenticated fetch of a real Mastodon RSS feed) and
-    none of them put an <img> in body_html at all today - Bluesky/Reddit only ever extract plain
-    text fields, and Mastodon's attached media rides in a separate <media:content> RSS extension
-    element this provider's code doesn't read, not inline in the <description> it does read. So
-    there is currently nothing there for this experiment to prove itself against.
+    never put an <img> in body_html at all (Bluesky/Reddit only extract plain text fields;
+    Mastodon's attached media rides in a separate <media:content> RSS element this provider's
+    code doesn't read) - Readwise Reader is the one built-in provider whose real code path can
+    carry an image today, since body_source="html" preserves <img> tags from the saved article's
+    real html_content (img isn't in _DROP_TAGS - see readwise.py).
 
-    Readwise Reader is the one exception: with body_source="html", _clean_body_html preserves an
-    <img> from the saved article's real html_content (img isn't in _DROP_TAGS - see readwise.py).
-    This runs the *actual* ReadwiseReaderStoryProvider.get_stories() - not a stand-in - through
-    its own existing no-credentials mock (a fake token via monkeypatch.setenv, a fake requests.get
-    matching test_readwise.py's own pattern), then through a real Goosepaper.to_html(), to prove
-    the image-inlining path works end to end for a provider whose real code path can carry an
-    image today, without needing a live Readwise account.
+    Runs the actual ReadwiseReaderStoryProvider.get_stories() - not a stand-in - through its own
+    existing no-credentials mock (matching test_readwise.py's own pattern) and into a real
+    Goosepaper.to_html(), to prove the image-inlining path works end to end for a real provider,
+    not just the synthetic _FixedBodyProvider used elsewhere in this file.
     """
     fake_png = _image_bytes("PNG", size=(50, 40))
 
@@ -612,3 +633,38 @@ def test_render_html_document_inlines_images_from_a_real_readwise_story(monkeypa
 
     assert "data:image/jpeg;base64," in html
     assert "https://example.com/article-photo.png" not in html
+
+
+def test_to_epub_also_inlines_images(monkeypatch):
+    """to_epub() doesn't route through _render_html_document() (no page_profile/layout exists
+    for a reflowable epub), so it needs its own call to _inline_story_images() - otherwise RSS
+    images stay remote links and comic.py's raw source bytes reach the epub untouched."""
+    import zipfile
+
+    fake_png = _image_bytes("PNG", size=(3000, 2000))
+    monkeypatch.setattr(
+        goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(fake_png)
+    )
+
+    provider = _FixedBodyProvider(
+        '<img src="https://example.com/photo.png">', headline="An article"
+    )
+    g = Goosepaper([provider])
+
+    buf = io.BytesIO()
+    g.to_epub(buf)
+    buf.seek(0)
+
+    with zipfile.ZipFile(buf) as archive:
+        chapters = [
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith(".xhtml")
+        ]
+    combined = "\n".join(chapters)
+
+    assert "data:image/jpeg;base64," in combined
+    assert "https://example.com/photo.png" not in combined
+    embedded = _decode_data_uri_image(combined)
+    # Capped to _IMAGE_DIMENSION_FALLBACK (1200), same as any page_profile that can't be parsed.
+    assert max(embedded.size) == 1200

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import datetime
+import io
 import json
 from dataclasses import dataclass, field
 from html import escape
@@ -27,6 +28,7 @@ from typing import Callable, Dict, List, Literal, Optional
 
 import requests
 from lxml import html as lxml_html
+from PIL import Image
 
 from ..story import Story
 from .storyprovider import StoryProvider
@@ -172,15 +174,18 @@ class DailyComicStoryProvider(StoryProvider):
     self-contained - regenerating or re-delivering it later doesn't depend on the strip's image
     URL still being reachable.
 
-    EXPERIMENT (render-time image sizing): unlike an earlier version of this provider, the fetched
-    bytes are embedded here *as-is* (original format, resolution, color mode - whatever the
-    source served), not decoded/re-encoded through Pillow. That normalization step (bounding
-    dimensions, fixing color mode, always emitting JPEG - see imageutil.py's module docstring for
-    why it's needed at all) now happens once, centrally, in Goosepaper._render_html_document(),
-    which sizes every embedded image - from any story provider, not just this one - off the
-    actual page_profile/layout being rendered instead of a guessed constant. This provider's job
-    is now only the parts a generic image pass can't do itself: the authenticated fetch, and
-    picking which URL is the actual strip.
+    The fetched bytes themselves are embedded *as-is* (original format, resolution, color mode -
+    whatever the source served), not decoded/re-encoded through Pillow here. That normalization
+    step (bounding dimensions, fixing color mode, always emitting JPEG - see imageutil.py's
+    module docstring for why it's needed at all) happens once, centrally, in
+    Goosepaper._render_html_document(), which sizes every embedded image - from any story
+    provider, not just this one - off the actual page_profile/layout being rendered instead of a
+    guessed constant. This provider's own job is only the parts a generic, later image pass can't
+    do itself: the authenticated fetch, picking which URL is the actual strip, and a cheap
+    Pillow `.verify()` structural check (see get_stories()) so an unrecognizable response - an
+    HTML error/interstitial page instead of the strip, a truncated download - still fails loudly
+    here and drops just this comic's story, instead of silently reaching the render step as a
+    "valid" data: URI that isn't actually decodable.
     """
 
     def __init__(
@@ -272,8 +277,20 @@ class DailyComicStoryProvider(StoryProvider):
         )
         image_response.raise_for_status()
 
-        # Raw bytes, original format/resolution - see get_stories()'s docstring "EXPERIMENT"
-        # note: sizing/format normalization happens later, centrally, in _render_html_document().
+        # A non-image response (an HTML error/interstitial page, a truncated download) must not
+        # silently become this story's "strip" - .verify() is a cheap structural check, not the
+        # full decode/resize/re-encode that happens later at render time, but it's enough to
+        # raise here and let it propagate out of get_stories() same as before, so
+        # Goosepaper.get_stories()'s per-provider try/except drops just this comic cleanly.
+        try:
+            Image.open(io.BytesIO(image_response.content)).verify()
+        except Exception as err:
+            raise RuntimeError(
+                f"Fetched strip image at {image_url} isn't a decodable image: {err}"
+            ) from err
+
+        # Raw bytes, original format/resolution - sizing/format normalization happens later,
+        # centrally, in Goosepaper._render_html_document() (see get_stories()'s docstring).
         content_type = image_response.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
         raw_b64 = base64.b64encode(image_response.content).decode("ascii")
         data_uri = f"data:{content_type};base64,{raw_b64}"

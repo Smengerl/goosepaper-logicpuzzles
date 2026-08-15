@@ -77,13 +77,11 @@ def _inline_story_images(body_html: str, max_dimension: int) -> str:
     """Finds every `<img>` in body_html - a remote `http(s)://` URL or an already-inlined `data:`
     URI - and replaces it with a size-capped, format-normalized `data:` JPEG via
     `imageutil.reencode_image_as_data_uri`. An image that fails to fetch or decode is left
-    untouched rather than aborting the whole story (same failure-tolerant behavior the RSS/comic
-    story providers used to implement individually - see #142/#133's history).
+    untouched rather than aborting the whole story.
 
     This runs once per render, here, rather than per-provider: it applies uniformly to every
-    story regardless of source (previously only RSS and comic stories were protected), and it
-    can size images off the actual page_profile/layout being rendered, which no individual story
-    provider has any visibility into.
+    story regardless of source, and it can size images off the actual page_profile/layout being
+    rendered, which no individual story provider has any visibility into.
     """
     if not body_html:
         return body_html
@@ -115,7 +113,14 @@ def _inline_story_images(body_html: str, max_dimension: int) -> str:
 
     if not changed:
         return body_html
-    return container.decode_contents()
+
+    # A body_html fragment that starts with a bare <style> tag (e.g. comic.py's CSS block,
+    # prepended before its <div>) isn't valid at the top of an HTML <body> - lxml silently
+    # relocates it into an implied <head>, separate from `container`. Re-serializing only
+    # `container.decode_contents()` would then drop that CSS outright. Prepending the head's
+    # own content restores it, since decode_contents() otherwise plain-strips it.
+    head_content = soup.head.decode_contents() if soup.head else ""
+    return head_content + container.decode_contents()
 
 
 def _bookmark_css(
@@ -678,10 +683,6 @@ class Goosepaper:
         """
         from ebooklib import epub
 
-        # TODO(render-time image sizing): unlike to_html()/to_pdf(), this never routes stories
-        # through _render_html_document(), so _inline_story_images() never runs here - embedded
-        # images reach the epub exactly as each story provider left them (e.g. bare remote
-        # <img src="http..."> links from RSS, or comic.py's raw, unprocessed source bytes).
         style_obj = _get_style(style)
 
         stories = []
@@ -694,6 +695,17 @@ class Goosepaper:
                     break
             else:
                 stories.append(story)
+
+        # Unlike to_html()/to_pdf(), there's no page_profile/layout here to size images off of -
+        # an epub's text reflows to whatever screen/font size the reader uses. _IMAGE_DIMENSION_
+        # FALLBACK is a flat, reasonable cap for that "unknown target" case (the same value used
+        # elsewhere when a page_profile can't be parsed), rather than leaving RSS images as
+        # remote links or comic.py's raw, unprocessed source bytes completely untouched.
+        for story in stories:
+            try:
+                story.body_html = _inline_story_images(story.body_html, _IMAGE_DIMENSION_FALLBACK)
+            except Exception as err:
+                print(f"Sad honk :/ Couldn't process images for {story.headline!r}: {err}")
 
         book = epub.EpubBook()
         title = f"{self.title} - {self.subtitle}"
