@@ -103,8 +103,9 @@ def _inline_story_images(body_html: str, max_dimension: int) -> str:
                 response.raise_for_status()
                 raw_bytes = response.content
             elif src.startswith("data:") and ";base64," in src:
-                # e.g. comic.py's raw, not-yet-normalized embed - decoded back to bytes here
-                # since body_html only carries text, not bytes, between provider and render step.
+                # An already-inlined image (e.g. from a second render pass) - decoded back to
+                # bytes here since body_html only carries text, not bytes, between provider and
+                # render step.
                 raw_bytes = base64.b64decode(src.split(";base64,", 1)[1])
             else:
                 continue
@@ -123,6 +124,17 @@ def _inline_story_images(body_html: str, max_dimension: int) -> str:
     # own content restores it, since decode_contents() otherwise plain-strips it.
     head_content = soup.head.decode_contents() if soup.head else ""
     return head_content + container.decode_contents()
+
+
+def _inline_all_story_images(stories: List[Story], max_dimension: int) -> None:
+    """Runs _inline_story_images() over every story in place, isolating one story's failure
+    from the rest - shared by both to_html()/to_pdf() (via _render_html_document()) and
+    to_epub(), which otherwise duplicated this loop identically."""
+    for story in stories:
+        try:
+            story.body_html = _inline_story_images(story.body_html, max_dimension)
+        except Exception as err:
+            print(f"Sad honk :/ Couldn't process images for {story.headline!r}: {err}")
 
 
 def _bookmark_css(
@@ -244,13 +256,7 @@ class Goosepaper:
         image_max_dimension = _image_max_dimension(
             style_obj.get_page_profile(page_profile), effective_columns
         )
-        for story in stories:
-            try:
-                story.body_html = _inline_story_images(story.body_html, image_max_dimension)
-            except Exception as err:
-                print(
-                    f"Sad honk :/ Couldn't process images for {story.headline!r}: {err}"
-                )
+        _inline_all_story_images(stories, image_max_dimension)
 
         ears = [
             story
@@ -701,13 +707,9 @@ class Goosepaper:
         # Unlike to_html()/to_pdf(), there's no page_profile/layout here to size images off of -
         # an epub's text reflows to whatever screen/font size the reader uses. _IMAGE_DIMENSION_
         # FALLBACK is a flat, reasonable cap for that "unknown target" case (the same value used
-        # elsewhere when a page_profile can't be parsed), rather than leaving RSS images as
-        # remote links or comic.py's raw, unprocessed source bytes completely untouched.
-        for story in stories:
-            try:
-                story.body_html = _inline_story_images(story.body_html, _IMAGE_DIMENSION_FALLBACK)
-            except Exception as err:
-                print(f"Sad honk :/ Couldn't process images for {story.headline!r}: {err}")
+        # elsewhere when a page_profile can't be parsed), rather than leaving every story
+        # provider's remote image links completely unprocessed.
+        _inline_all_story_images(stories, _IMAGE_DIMENSION_FALLBACK)
 
         book = epub.EpubBook()
         title = f"{self.title} - {self.subtitle}"

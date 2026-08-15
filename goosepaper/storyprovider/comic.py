@@ -169,9 +169,17 @@ class DailyComicStoryProvider(StoryProvider):
     same check against gocomics.com's own CDN host serving the strip image itself succeeded with
     no special headers at all, generic ones, or the browser-like ones alike - the image isn't
     gated the way the page is). Fetching, format/size normalization, and embedding as a `data:`
-    URI all happen once, centrally, in Goosepaper._render_html_document() - the same generic pass
-    every other story provider's images go through (see goosepaper.py's `_inline_story_images()`
-    and imageutil.py's module docstring for why that normalization matters at all).
+    URI all happen once, centrally, in Goosepaper (`_render_html_document()` for to_html()/
+    to_pdf(), `to_epub()` separately for epub output) - the same generic pass every other story
+    provider's images go through (see goosepaper.py's `_inline_story_images()` and imageutil.py's
+    module docstring for why that normalization matters at all).
+
+    This provider does not itself validate that the resolved URL actually points at a decodable
+    image - unlike an earlier version, which fetched and decoded the strip here and raised (so
+    Goosepaper.get_stories() would cleanly drop just this comic) if it wasn't a real image. That
+    check now happens only inside `_inline_story_images()`, which fails soft on a bad image
+    (leaves the original link in place) rather than dropping the Story - the same tradeoff RSS
+    images already have.
     """
 
     def __init__(
@@ -259,9 +267,12 @@ class DailyComicStoryProvider(StoryProvider):
         )
 
         # Left as a remote link - fetching, validating, and normalizing it happens once,
-        # centrally, in Goosepaper._render_html_document() (see get_stories()'s docstring).
+        # centrally, in Goosepaper (see get_stories()'s docstring). image_url is escaped like
+        # every other value interpolated here: it's extracted from the source page's own HTML
+        # and already entity-decoded by lxml, so an unescaped embed would let a literal `"` in
+        # a source's src attribute break out of this one.
         alt_text = escape(label)
-        body_html = f'<img class="comic-strip" src="{image_url}" alt="{alt_text}" />'
+        body_html = f'<img class="comic-strip" src="{escape(image_url)}" alt="{alt_text}" />'
         if subtitle:
             body_html += f'<p class="comic-subtitle">{escape(subtitle)}</p>'
 

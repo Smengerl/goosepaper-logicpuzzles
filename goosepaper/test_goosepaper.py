@@ -484,6 +484,32 @@ def test_inline_story_images_leaves_a_failing_image_untouched(monkeypatch):
     assert _inline_story_images(html, max_dimension=1200) == html
 
 
+def test_inline_story_images_leaves_an_http_error_response_untouched(monkeypatch):
+    """Same failure-tolerance guarantee as the connection-error case above, but via a response
+    that comes back successfully at the transport level and only fails raise_for_status() -
+    the only test that actually exercises _FakeResponse's ok=False branch."""
+    monkeypatch.setattr(
+        goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(b"", ok=False)
+    )
+
+    html = '<img src="https://example.com/gone.jpg">'
+    assert _inline_story_images(html, max_dimension=1200) == html
+
+
+def test_inline_story_images_leaves_an_undecodable_response_untouched(monkeypatch):
+    """A response that succeeds (HTTP 200) but isn't actual image data - e.g. an anti-bot HTML
+    interstitial served where comic.py's resolved strip URL was expected - must be left
+    untouched like any other failure, not raise out of _inline_story_images or embed garbage."""
+    monkeypatch.setattr(
+        goosepaper_module.requests,
+        "get",
+        lambda url, *, headers, timeout: _FakeResponse(b"<html><body>Access denied</body></html>"),
+    )
+
+    html = '<img src="https://example.com/not-actually-an-image.jpg">'
+    assert _inline_story_images(html, max_dimension=1200) == html
+
+
 def test_inline_story_images_skips_relative_and_missing_src():
     html = '<img src="/relative.jpg"><img>'
     assert _inline_story_images(html, max_dimension=1200) == html
@@ -491,10 +517,8 @@ def test_inline_story_images_skips_relative_and_missing_src():
 
 def test_inline_story_images_preserves_a_leading_style_block(monkeypatch):
     """Regression test for the real shape comic.py's body_html has: a bare <style> tag followed
-    by a <div>, not wrapped in any container (see comic._COMIC_CSS + get_stories()). lxml
-    relocates a body-level <style> into an implied <head>, separate from the <body> content
-    _inline_story_images serializes - without explicitly preserving that head content, the CSS
-    would silently vanish the moment an image in the same body_html gets inlined."""
+    by a <div>, not wrapped in any container (see comic._COMIC_CSS + get_stories()) - see
+    _inline_story_images's own comment on the head/body relocation this triggers in lxml."""
     fake_png = _image_bytes("PNG", size=(10, 8))
     monkeypatch.setattr(
         goosepaper_module.requests, "get", lambda url, *, headers, timeout: _FakeResponse(fake_png)
@@ -534,15 +558,19 @@ def test_render_html_document_inlines_images_from_any_story_provider(monkeypatch
 def test_render_html_document_isolates_a_failing_storys_image_inlining(monkeypatch):
     """A failure processing one story's images must not take the whole render down with it -
     the deleted rss.py call site used to guarantee this per-story; _render_html_document()'s own
-    loop needs the same guarantee now that it runs for every story instead of just RSS ones."""
-    real_inline_story_images = goosepaper_module._inline_story_images
+    loop needs the same guarantee now that it runs for every story instead of just RSS ones.
 
-    def flaky_inline_story_images(body_html, max_dimension):
+    The fault is injected at the actual boundary _inline_story_images can realistically fail at
+    (parsing untrusted body_html via bs4/lxml) rather than by replacing the private function
+    itself, so this stays meaningful across internal refactors of that function."""
+    real_soup = goosepaper_module.bs4.BeautifulSoup
+
+    def flaky_soup(body_html, *args, **kwargs):
         if "boom" in body_html:
-            raise RuntimeError("simulated parse failure")
-        return real_inline_story_images(body_html, max_dimension)
+            raise ValueError("simulated bs4/lxml parse failure")
+        return real_soup(body_html, *args, **kwargs)
 
-    monkeypatch.setattr(goosepaper_module, "_inline_story_images", flaky_inline_story_images)
+    monkeypatch.setattr(goosepaper_module.bs4, "BeautifulSoup", flaky_soup)
 
     broken = _FixedBodyProvider("<p>boom</p>", headline="Broken story")
     fine = _FixedBodyProvider("<p>All good</p>", headline="Fine story")
@@ -636,8 +664,8 @@ def test_render_html_document_inlines_images_from_a_real_readwise_story(monkeypa
 
 def test_to_epub_also_inlines_images(monkeypatch):
     """to_epub() doesn't route through _render_html_document() (no page_profile/layout exists
-    for a reflowable epub), so it needs its own call to _inline_story_images() - otherwise RSS
-    images stay remote links and comic.py's raw source bytes reach the epub untouched."""
+    for a reflowable epub), so it needs its own call to _inline_all_story_images() - otherwise
+    every provider's remote image links would reach the epub completely unprocessed."""
     import zipfile
 
     fake_png = _image_bytes("PNG", size=(3000, 2000))
