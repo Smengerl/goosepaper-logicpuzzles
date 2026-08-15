@@ -18,9 +18,7 @@ strips on each site before relying on it - see the module's test suite and PR hi
 
 from __future__ import annotations
 
-import base64
 import datetime
-import io
 import json
 from dataclasses import dataclass, field
 from html import escape
@@ -28,7 +26,6 @@ from typing import Callable, Dict, List, Literal, Optional
 
 import requests
 from lxml import html as lxml_html
-from PIL import Image
 
 from ..story import Story
 from .storyprovider import StoryProvider
@@ -166,26 +163,15 @@ class DailyComicStoryProvider(StoryProvider):
     `_ComicSource` entry covers every comic on that site, so there's no per-comic label to
     hardcode.
 
-    The strip image itself is downloaded here and inlined as a base64 `data:` URI rather than
-    linked by remote URL, for two reasons that are specific to *this* fetch and can't move
-    anywhere else: (1) gocomics.com requires the same browser-like headers for the *image*
-    request as for the page request, and nothing downstream of this provider (WeasyPrint, or a
-    generic later re-encode pass) has any way to attach them; (2) it makes the rendered PDF
-    self-contained - regenerating or re-delivering it later doesn't depend on the strip's image
-    URL still being reachable.
-
-    The fetched bytes themselves are embedded *as-is* (original format, resolution, color mode -
-    whatever the source served), not decoded/re-encoded through Pillow here. That normalization
-    step (bounding dimensions, fixing color mode, always emitting JPEG - see imageutil.py's
-    module docstring for why it's needed at all) happens once, centrally, in
-    Goosepaper._render_html_document(), which sizes every embedded image - from any story
-    provider, not just this one - off the actual page_profile/layout being rendered instead of a
-    guessed constant. This provider's own job is only the parts a generic, later image pass can't
-    do itself: the authenticated fetch, picking which URL is the actual strip, and a cheap
-    Pillow `.verify()` structural check (see get_stories()) so an unrecognizable response - an
-    HTML error/interstitial page instead of the strip, a truncated download - still fails loudly
-    here and drops just this comic's story, instead of silently reaching the render step as a
-    "valid" data: URI that isn't actually decodable.
+    The strip image itself is left as a remote `<img src>` link, not fetched or embedded here -
+    this provider's job ends at resolving which URL is the actual strip. Only the *page* fetch
+    needs gocomics.com's browser-like headers (verified live: without them the page 403s; the
+    same check against gocomics.com's own CDN host serving the strip image itself succeeded with
+    no special headers at all, generic ones, or the browser-like ones alike - the image isn't
+    gated the way the page is). Fetching, format/size normalization, and embedding as a `data:`
+    URI all happen once, centrally, in Goosepaper._render_html_document() - the same generic pass
+    every other story provider's images go through (see goosepaper.py's `_inline_story_images()`
+    and imageutil.py's module docstring for why that normalization matters at all).
     """
 
     def __init__(
@@ -272,31 +258,10 @@ class DailyComicStoryProvider(StoryProvider):
             _first(doc.xpath(source.subtitle_xpath)) if source.subtitle_xpath else None
         )
 
-        image_response = requests.get(
-            image_url, headers=source.headers, timeout=_DEFAULT_TIMEOUT
-        )
-        image_response.raise_for_status()
-
-        # A non-image response (an HTML error/interstitial page, a truncated download) must not
-        # silently become this story's "strip" - .verify() is a cheap structural check, not the
-        # full decode/resize/re-encode that happens later at render time, but it's enough to
-        # raise here and let it propagate out of get_stories() same as before, so
-        # Goosepaper.get_stories()'s per-provider try/except drops just this comic cleanly.
-        try:
-            Image.open(io.BytesIO(image_response.content)).verify()
-        except Exception as err:
-            raise RuntimeError(
-                f"Fetched strip image at {image_url} isn't a decodable image: {err}"
-            ) from err
-
-        # Raw bytes, original format/resolution - sizing/format normalization happens later,
+        # Left as a remote link - fetching, validating, and normalizing it happens once,
         # centrally, in Goosepaper._render_html_document() (see get_stories()'s docstring).
-        content_type = image_response.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
-        raw_b64 = base64.b64encode(image_response.content).decode("ascii")
-        data_uri = f"data:{content_type};base64,{raw_b64}"
-
         alt_text = escape(label)
-        body_html = f'<img class="comic-strip" src="{data_uri}" alt="{alt_text}" />'
+        body_html = f'<img class="comic-strip" src="{image_url}" alt="{alt_text}" />'
         if subtitle:
             body_html += f'<p class="comic-subtitle">{escape(subtitle)}</p>'
 

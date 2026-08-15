@@ -1,11 +1,7 @@
-import base64
 import datetime
-import io
 import json
-import re
 
 import pytest
-from PIL import Image
 
 from . import comic
 
@@ -50,23 +46,6 @@ def _arcamax_html(series_name: str = "Garfield") -> bytes:
     """.encode()
 
 
-def _image_bytes(fmt: str, mode: str = "RGB", size=(4, 3), color=(200, 50, 10)) -> bytes:
-    image = Image.new(mode, size, color if mode != "L" else 128)
-    buffer = io.BytesIO()
-    image.save(buffer, format=fmt)
-    return buffer.getvalue()
-
-
-def _decode_data_uri_image(body_html: str) -> Image.Image:
-    """comic.py embeds the source's own mime type (png/gif/jpeg/...), not always image/jpeg -
-    since it no longer re-encodes through Pillow itself - so the prefix is matched generically
-    rather than hardcoded."""
-    match = re.search(r'src="data:image/\w+;base64,([^"]+)"', body_html)
-    assert match, f"no embedded data: image found in {body_html!r}"
-    payload = base64.b64decode(match.group(1))
-    return Image.open(io.BytesIO(payload))
-
-
 class _FakeResponse:
     def __init__(self, content: bytes, headers: dict = None):
         self.content = content
@@ -101,14 +80,10 @@ def test_xkcd_uses_fixed_headline_and_no_byline_but_keeps_hover_text(monkeypatch
     deliberately NOT used as the headline - see get_stories()'s docstring on why a fixed,
     source-derived headline (and no byline) is used for every comic instead."""
     calls = []
-    fake_png = _image_bytes("PNG", size=(5, 4))
 
     def fake_get(url, *, headers, timeout):
         calls.append(url)
-        if url == "https://xkcd.com":
-            return _FakeResponse(_XKCD_HTML)
-        assert url == "https://imgs.xkcd.com/comics/todays_strip.png"
-        return _FakeResponse(fake_png, headers={"Content-Type": "image/png"})
+        return _FakeResponse(_XKCD_HTML)
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
@@ -120,25 +95,19 @@ def test_xkcd_uses_fixed_headline_and_no_byline_but_keeps_hover_text(monkeypatch
     assert story.headline == "XKCD"
     assert story.byline is None
     assert "hover joke text" in story.body_html
-    embedded = _decode_data_uri_image(story.body_html)
-    assert embedded.size == (5, 4)
-    assert calls == [
-        "https://xkcd.com",
-        "https://imgs.xkcd.com/comics/todays_strip.png",
-    ]
+    assert 'src="https://imgs.xkcd.com/comics/todays_strip.png"' in story.body_html
+    # Only the page is fetched - the strip image is left as a remote link for the render step
+    # to fetch/embed later (see get_stories()'s docstring).
+    assert calls == ["https://xkcd.com"]
 
 
-def test_gocomics_uses_date_scoped_url_browser_headers_and_derives_label(monkeypatch):
+def test_gocomics_uses_date_scoped_url_and_browser_headers_and_derives_label(monkeypatch):
     seen = {"urls": [], "headers": []}
-    fake_gif = _image_bytes("GIF", size=(6, 5))
 
     def fake_get(url, *, headers, timeout):
         seen["urls"].append(url)
         seen["headers"].append(headers)
-        if url == "https://www.gocomics.com/calvinandhobbes/2026/01/05":
-            return _FakeResponse(_gocomics_html("Calvin and Hobbes"))
-        assert url == "https://assets.gocomics.com/strip.gif"
-        return _FakeResponse(fake_gif, headers={"Content-Type": "image/gif"})
+        return _FakeResponse(_gocomics_html("Calvin and Hobbes"))
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
@@ -147,31 +116,27 @@ def test_gocomics_uses_date_scoped_url_browser_headers_and_derives_label(monkeyp
     )
     stories = provider.get_stories()
 
-    assert seen["urls"][0] == "https://www.gocomics.com/calvinandhobbes/2026/01/05"
-    # Both the page request and the follow-up image request need gocomics.com's
-    # browser-like headers - see the "gocomics" entry in _COMIC_SOURCES.
-    for headers in seen["headers"]:
-        assert headers["User-Agent"].startswith("Mozilla/5.0")
-        assert headers["Accept-Language"] == "en"
+    assert seen["urls"] == ["https://www.gocomics.com/calvinandhobbes/2026/01/05"]
+    # Only the page fetch needs gocomics.com's browser-like headers - see the "gocomics" entry
+    # in _COMIC_SOURCES and get_stories()'s docstring (the strip image itself, on gocomics.com's
+    # own CDN, isn't header-gated - verified live against a real strip URL).
+    assert seen["headers"][0]["User-Agent"].startswith("Mozilla/5.0")
+    assert seen["headers"][0]["Accept-Language"] == "en"
 
     story = stories[0]
     # Label is derived from the page's JSON-LD, not hardcoded per comic.
     assert story.headline == "Calvin and Hobbes"
     assert story.byline is None
     assert story.date == datetime.datetime(2026, 1, 5)
-    embedded = _decode_data_uri_image(story.body_html)
-    assert embedded.size == (6, 5)
+    assert 'src="https://assets.gocomics.com/strip.gif"' in story.body_html
 
 
 def test_gocomics_derives_label_for_a_different_comic_without_any_code_change(monkeypatch):
     """The whole point of the generic gocomics/arcamax sources: any comic on that site works
     purely by passing a different comic_name, with no new _ComicSource entry or label mapping."""
-    fake_gif = _image_bytes("GIF", size=(3, 3))
 
     def fake_get(url, *, headers, timeout):
-        if url == "https://www.gocomics.com/pearlsbeforeswine/2026/01/05":
-            return _FakeResponse(_gocomics_html("Pearls Before Swine"))
-        return _FakeResponse(fake_gif, headers={"Content-Type": "image/gif"})
+        return _FakeResponse(_gocomics_html("Pearls Before Swine"))
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
@@ -186,14 +151,11 @@ def test_gocomics_derives_label_for_a_different_comic_without_any_code_change(mo
 def test_gocomics_missing_label_raises_even_though_image_was_found(monkeypatch):
     """A page with the strip <img> but no (or malformed) JSON-LD indicates the site's template
     changed - fail loudly instead of embedding a comic with no headline."""
-    fake_gif = _image_bytes("GIF", size=(3, 3))
 
     def fake_get(url, *, headers, timeout):
-        if url == "https://www.gocomics.com/calvinandhobbes/2026/01/05":
-            return _FakeResponse(
-                b'<html><body><img class="comic image" src="https://a/strip.gif" /></body></html>'
-            )
-        return _FakeResponse(fake_gif, headers={"Content-Type": "image/gif"})
+        return _FakeResponse(
+            b'<html><body><img class="comic image" src="https://a/strip.gif" /></body></html>'
+        )
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
@@ -206,34 +168,25 @@ def test_gocomics_missing_label_raises_even_though_image_was_found(monkeypatch):
 
 def test_arcamax_derives_label_from_og_title_and_has_no_custom_headers(monkeypatch):
     seen_headers = []
-    fake_jpeg = _image_bytes("JPEG", size=(7, 6))
 
     def fake_get(url, *, headers, timeout):
         seen_headers.append(headers)
-        if url == "https://www.arcamax.com/thefunnies/garfield/":
-            return _FakeResponse(_arcamax_html("Garfield"))
-        assert url == "https://www.arcamax.com/img/today.jpg"
-        return _FakeResponse(fake_jpeg, headers={"Content-Type": "image/jpeg"})
+        return _FakeResponse(_arcamax_html("Garfield"))
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
     provider = comic.DailyComicStoryProvider(comic_type="arcamax", comic_name="garfield")
     stories = provider.get_stories()
 
-    assert seen_headers == [{}, {}]
+    assert seen_headers == [{}]
     assert stories[0].byline is None
     assert stories[0].headline == "Garfield"
-    embedded = _decode_data_uri_image(stories[0].body_html)
-    assert embedded.size == (7, 6)
+    assert 'src="https://www.arcamax.com/img/today.jpg"' in stories[0].body_html
 
 
 def test_arcamax_derives_label_for_a_different_comic_without_any_code_change(monkeypatch):
-    fake_jpeg = _image_bytes("JPEG", size=(3, 3))
-
     def fake_get(url, *, headers, timeout):
-        if url == "https://www.arcamax.com/thefunnies/beetlebailey/":
-            return _FakeResponse(_arcamax_html("Beetle Bailey"))
-        return _FakeResponse(fake_jpeg, headers={"Content-Type": "image/jpeg"})
+        return _FakeResponse(_arcamax_html("Beetle Bailey"))
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
@@ -241,30 +194,6 @@ def test_arcamax_derives_label_for_a_different_comic_without_any_code_change(mon
     stories = provider.get_stories()
 
     assert stories[0].headline == "Beetle Bailey"
-
-
-def test_strip_image_is_embedded_unmodified_at_source_format_and_resolution(monkeypatch):
-    """This provider only verifies the fetched bytes decode as *some* image (see
-    get_stories()'s docstring) - it doesn't resize/re-encode them (dimension capping, CMYK->RGB,
-    transparency compositing). That normalization happens once, centrally, in
-    Goosepaper._render_html_document(), and is tested there / in test_imageutil.py's direct
-    tests of reencode_image_as_data_uri."""
-    fake_cmyk_jpeg = _image_bytes("JPEG", mode="CMYK", size=(8, 8))
-
-    def fake_get(url, *, headers, timeout):
-        if url == "https://www.arcamax.com/thefunnies/garfield/":
-            return _FakeResponse(_arcamax_html("Garfield"))
-        return _FakeResponse(fake_cmyk_jpeg, headers={"Content-Type": "image/jpeg"})
-
-    monkeypatch.setattr(comic.requests, "get", fake_get)
-
-    provider = comic.DailyComicStoryProvider(comic_type="arcamax", comic_name="garfield")
-    stories = provider.get_stories()
-
-    assert "data:image/jpeg;base64," in stories[0].body_html
-    embedded = _decode_data_uri_image(stories[0].body_html)
-    assert embedded.mode == "CMYK"
-    assert embedded.size == (8, 8)
 
 
 def test_missing_strip_image_raises_informative_error(monkeypatch):
@@ -278,27 +207,6 @@ def test_missing_strip_image_raises_informative_error(monkeypatch):
         provider.get_stories()
 
 
-def test_undecodable_strip_response_raises_instead_of_embedding_garbage(monkeypatch):
-    """Regression test: this provider no longer resizes/re-encodes the strip through Pillow
-    (that moved to Goosepaper._render_html_document(), see get_stories()'s docstring), but it
-    must still catch a response that isn't a real image at all - e.g. an anti-bot HTML
-    interstitial served with HTTP 200 instead of the strip - and raise, exactly like the old
-    unconditional Pillow decode used to. Without this check, get_stories() would silently
-    succeed with a Story whose "image" is unrenderable garbage instead of the provider's own
-    per-comic story being cleanly dropped by Goosepaper.get_stories()'s top-level try/except."""
-
-    def fake_get(url, *, headers, timeout):
-        if url == "https://xkcd.com":
-            return _FakeResponse(_XKCD_HTML)
-        return _FakeResponse(b"<html><body>Access denied</body></html>")
-
-    monkeypatch.setattr(comic.requests, "get", fake_get)
-
-    provider = comic.DailyComicStoryProvider(comic_type="xkcd")
-    with pytest.raises(RuntimeError, match="isn't a decodable image"):
-        provider.get_stories()
-
-
 def test_gocomics_falls_back_to_previous_day_when_todays_strip_is_missing(monkeypatch, capsys):
     """Regression test: gocomics.com's daily rollover time/timezone isn't documented, so
     generation running earlier in the day than that (unknown) rollover would otherwise fail
@@ -307,16 +215,13 @@ def test_gocomics_falls_back_to_previous_day_when_todays_strip_is_missing(monkey
     fallback in the Story itself (headline/date/body - the reader shouldn't see a difference),
     and (c) only be surfaced as a log line, per the addon maintainer's explicit call."""
     seen_urls = []
-    fake_gif = _image_bytes("GIF", size=(6, 5))
 
     def fake_get(url, *, headers, timeout):
         seen_urls.append(url)
         if url == "https://www.gocomics.com/calvinandhobbes/2026/01/05":
             return _FakeResponse(b"<html><body>not published yet</body></html>")
-        if url == "https://www.gocomics.com/calvinandhobbes/2026/01/04":
-            return _FakeResponse(_gocomics_html("Calvin and Hobbes"))
-        assert url == "https://assets.gocomics.com/strip.gif"
-        return _FakeResponse(fake_gif, headers={"Content-Type": "image/gif"})
+        assert url == "https://www.gocomics.com/calvinandhobbes/2026/01/04"
+        return _FakeResponse(_gocomics_html("Calvin and Hobbes"))
 
     monkeypatch.setattr(comic.requests, "get", fake_get)
 
@@ -328,15 +233,13 @@ def test_gocomics_falls_back_to_previous_day_when_todays_strip_is_missing(monkey
     assert seen_urls == [
         "https://www.gocomics.com/calvinandhobbes/2026/01/05",
         "https://www.gocomics.com/calvinandhobbes/2026/01/04",
-        "https://assets.gocomics.com/strip.gif",
     ]
     story = stories[0]
     # No visible trace of the fallback - same headline/date/body shape as the normal case.
     assert story.headline == "Calvin and Hobbes"
     assert story.date == datetime.datetime(2026, 1, 5)
     assert '<p class="comic-subtitle">' not in story.body_html
-    embedded = _decode_data_uri_image(story.body_html)
-    assert embedded.size == (6, 5)
+    assert 'src="https://assets.gocomics.com/strip.gif"' in story.body_html
 
     log_output = capsys.readouterr().out
     assert "2026-01-05" in log_output

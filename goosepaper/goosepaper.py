@@ -103,6 +103,8 @@ def _inline_story_images(body_html: str, max_dimension: int) -> str:
                 response.raise_for_status()
                 raw_bytes = response.content
             elif src.startswith("data:") and ";base64," in src:
+                # e.g. comic.py's raw, not-yet-normalized embed - decoded back to bytes here
+                # since body_html only carries text, not bytes, between provider and render step.
                 raw_bytes = base64.b64decode(src.split(";base64,", 1)[1])
             else:
                 continue

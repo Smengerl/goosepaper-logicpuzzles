@@ -456,10 +456,9 @@ def test_inline_story_images_fetches_and_normalizes_a_remote_http_image(monkeypa
 
 
 def test_inline_story_images_re_encodes_an_already_inlined_data_uri(monkeypatch):
-    """Covers the comic-provider case: comic.py now embeds the source's raw, unprocessed bytes
-    as a data: URI (see comic.py's get_stories() docstring) - the CMYK/oversized/format-fixup
-    normalization that used to happen inside comic.py must still happen here, on data: sources
-    too, not just remote http(s) ones."""
+    """A provider (or an earlier render pass) may hand back a story whose image is already a
+    data: URI rather than a remote link - CMYK/oversized/format normalization must still apply
+    there too, not just to freshly-fetched remote http(s) images."""
 
     def fail_get(*args, **kwargs):
         raise AssertionError("requests.get should not run for an already-inlined image")
