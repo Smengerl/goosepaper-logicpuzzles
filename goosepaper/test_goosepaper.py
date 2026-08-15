@@ -11,6 +11,7 @@ from .story import Story
 from .styles import PageProfile, Style
 from .util import PlacementPreference
 
+from .storyprovider import readwise
 from .storyprovider.storyprovider import LoremStoryProvider
 
 
@@ -521,3 +522,68 @@ def test_render_html_document_sizes_images_smaller_for_a_smaller_page_profile(mo
     )
 
     assert max(_decode_data_uri_image(small_html).size) < max(_decode_data_uri_image(large_html).size)
+
+
+def test_render_html_document_inlines_images_from_a_real_readwise_story(monkeypatch):
+    """Goes one step further than the synthetic-provider test above: Mastodon/Bluesky/Reddit
+    were checked directly (grep + a live, unauthenticated fetch of a real Mastodon RSS feed) and
+    none of them put an <img> in body_html at all today - Bluesky/Reddit only ever extract plain
+    text fields, and Mastodon's attached media rides in a separate <media:content> RSS extension
+    element this provider's code doesn't read, not inline in the <description> it does read. So
+    there is currently nothing there for this experiment to prove itself against.
+
+    Readwise Reader is the one exception: with body_source="html", _clean_body_html preserves an
+    <img> from the saved article's real html_content (img isn't in _DROP_TAGS - see readwise.py).
+    This runs the *actual* ReadwiseReaderStoryProvider.get_stories() - not a stand-in - through
+    its own existing no-credentials mock (a fake token via monkeypatch.setenv, a fake requests.get
+    matching test_readwise.py's own pattern), then through a real Goosepaper.to_html(), to prove
+    the image-inlining path works end to end for a provider whose real code path can carry an
+    image today, without needing a live Readwise account.
+    """
+    fake_png = _image_bytes("PNG", size=(50, 40))
+
+    class _FakeReadwiseResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "id": "doc-1",
+                        "title": "A saved article",
+                        "author": "Ada Lovelace",
+                        "site_name": "Example",
+                        "reading_time": "4 mins",
+                        "published_date": "2026-04-24",
+                        "saved_at": "2026-04-25T10:15:00+00:00",
+                        "summary": "fallback",
+                        "html_content": (
+                            "<article><h1>A saved article</h1>"
+                            "<p>Look at this:</p>"
+                            '<img src="https://example.com/article-photo.png">'
+                            "</article>"
+                        ),
+                        "parent_id": None,
+                    }
+                ],
+                "nextPageCursor": None,
+            }
+
+    def fake_get(url, *args, **kwargs):
+        if url == "https://readwise.io/api/v3/list/":
+            return _FakeReadwiseResponse()
+        return _FakeResponse(fake_png)
+
+    monkeypatch.setenv("READWISE_TOKEN", "test-token")
+    # readwise.requests and goosepaper_module.requests are the same module object (Python caches
+    # imports) - patching .get once covers both the Readwise API call and the later image fetch.
+    monkeypatch.setattr(readwise.requests, "get", fake_get)
+
+    provider = readwise.ReadwiseReaderStoryProvider(body_source="html")
+    g = Goosepaper([provider])
+
+    html = g.to_html(page_profile="remarkable2", layout="1col")
+
+    assert "data:image/jpeg;base64," in html
+    assert "https://example.com/article-photo.png" not in html
