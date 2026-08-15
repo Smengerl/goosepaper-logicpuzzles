@@ -673,6 +673,10 @@ class Goosepaper:
         """
         from ebooklib import epub
 
+        # TODO(render-time image sizing): unlike to_html()/to_pdf(), this never routes stories
+        # through _render_html_document(), so _inline_story_images() never runs here - embedded
+        # images reach the epub exactly as each story provider left them (e.g. bare remote
+        # <img src="http..."> links from RSS, or comic.py's raw, unprocessed source bytes).
         style_obj = _get_style(style)
 
         stories = []
