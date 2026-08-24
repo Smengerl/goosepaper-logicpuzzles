@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.resources as resources
-import re
 from dataclasses import dataclass
 
 
@@ -228,42 +227,33 @@ def _read_style_from_root(root, style):
     return None, []
 
 
-# CSS length units PageProfile values are ever written in (in/mm today - PageProfile is a
-# hand-authored dataclass, not parsed from arbitrary user CSS, so this doesn't need to cover
-# every unit CSS itself allows) - each mapped to its size in points (1in = 72pt by definition;
-# 1mm = 1in/25.4). Points are the calculation's common unit throughout (see _to_pt()/
-# _comic_image_max_height_pt()) purely because font_size already arrives in points - not because
-# points are more "correct" than in/mm.
-_PT_PER_UNIT = {"in": 72, "mm": 72 / 25.4, "cm": 72 / 2.54, "pt": 1}
-_LENGTH_RE = re.compile(r"([\d.]+)\s*(" + "|".join(_PT_PER_UNIT) + r")$")
-
-
-def _to_pt(value: str) -> float:
-    """Parses a CSS length (e.g. "0.36in", "13mm") to points, whichever of `_PT_PER_UNIT`'s units
-    it's written in - PageProfile entries aren't all the same unit (compare "paper_pro"'s
-    `0.36in` margins to "a4"'s `13mm`), so assuming one specific unit here silently breaks every
-    profile written in another (an inch-only version of this parser shipped briefly and would
-    have raised on `page_profile: "a4"` the first time anyone used it - never actually released,
-    but exactly the kind of thing this generality is for)."""
-    match = _LENGTH_RE.match(value.strip())
-    if not match:
-        raise ValueError(
-            f"Expected a length in one of {sorted(_PT_PER_UNIT)} (e.g. \"0.36in\"), got {value!r}."
-        )
-    number, unit = match.groups()
-    return float(number) * _PT_PER_UNIT[unit]
+def _parse_length_inches(value: str) -> float:
+    """Parses a PageProfile length ("6.18in", "9mm") into inches - the only two units any bundled
+    page_profile currently uses (see `_PAGE_PROFILES` above). The canonical copy: goosepaper.py
+    has its own use for the same parsing (deriving an embedded-image pixel cap from page
+    geometry) and imports this one rather than keeping a second copy - PageProfile itself lives
+    here, so this is that copy's natural home. Assuming one specific unit here would silently
+    break every profile written in another - an inch-only version of this shipped briefly in
+    `_comic_image_max_height_in()` below and would have raised on `page_profile: "a4"` (mm-based)
+    the first time anyone used it, never actually released."""
+    value = value.strip()
+    if value.endswith("mm"):
+        return float(value[:-2]) / 25.4
+    if value.endswith("in"):
+        return float(value[:-2])
+    raise ValueError(f"Unsupported page_profile length unit: {value!r}")
 
 
 # `article.story-short > .story-headline`'s own font-size/line-height/margin-bottom (see the CSS
 # block below) - named here, and referenced from both that block and
-# _comic_image_max_height_pt(), specifically so the two can never silently drift apart the way
+# _comic_image_max_height_in(), specifically so the two can never silently drift apart the way
 # two independently hand-copied sets of the same three numbers eventually would.
 _STORY_SHORT_HEADLINE_FONT_SIZE_EM = 1.16
 _STORY_SHORT_HEADLINE_LINE_HEIGHT = 1.12
 _STORY_SHORT_HEADLINE_MARGIN_BOTTOM_REM = 0.28
 
 
-def _comic_image_max_height_pt(profile: PageProfile, font_size: int) -> float:
+def _comic_image_max_height_in(profile: PageProfile, font_size: int) -> float:
     """How tall a comic image is allowed to get before WeasyPrint's page-break-inside "avoid" on
     its article (see storyprovider/comic.py's short_form comment) stops being reliable - derived
     from the page profile actually in use and the configured font size, not a flat guess. A strip
@@ -277,23 +267,29 @@ def _comic_image_max_height_pt(profile: PageProfile, font_size: int) -> float:
     Reserves 2 lines' worth of the headline's own font-size/line-height - covers a comic label
     long enough to wrap at a narrow page width (e.g. "Wallace The Brave") without needing to
     special-case it - plus that headline's own margin-bottom, plus a small fixed buffer for
-    rounding/border effects that isn't worth computing exactly.
+    rounding/border effects that isn't worth computing exactly. font_size arrives in points
+    (goosepaper's own unit for it throughout - see `body { font-size: ...pt }` below) and is
+    converted to inches (1in = 72pt) to match _parse_length_inches, rather than the other way
+    around, so this stays consistent with how the rest of the codebase already parses
+    PageProfile lengths (see this function's own docstring).
     """
-    content_height_pt = _to_pt(profile.size.split()[1]) - _to_pt(profile.margin_top) - _to_pt(
-        profile.margin_bottom
+    content_height_in = (
+        _parse_length_inches(profile.size.split()[1])
+        - _parse_length_inches(profile.margin_top)
+        - _parse_length_inches(profile.margin_bottom)
     )
     headline_pt = font_size * _STORY_SHORT_HEADLINE_FONT_SIZE_EM
     two_lines_pt = 2 * headline_pt * _STORY_SHORT_HEADLINE_LINE_HEIGHT
     margin_bottom_pt = font_size * _STORY_SHORT_HEADLINE_MARGIN_BOTTOM_REM
-    reserved_pt = two_lines_pt + margin_bottom_pt + 4  # + small fixed buffer
-    return content_height_pt - reserved_pt
+    reserved_in = (two_lines_pt + margin_bottom_pt) / 72 + 0.06  # + small fixed buffer
+    return content_height_in - reserved_in
 
 
 def _base_print_css(
     profile: PageProfile, font_size: int, effective_columns: int
 ) -> str:
     toc_columns = 1 if effective_columns == 1 else 2
-    comic_image_max_height_pt = _comic_image_max_height_pt(profile, font_size)
+    comic_image_max_height_in = _comic_image_max_height_in(profile, font_size)
     return f"""
     @page {{
         size: {profile.size};
@@ -760,18 +756,14 @@ def _base_print_css(
         page-break-inside: avoid;
     }}
 
-    /* Computed per page_profile/font_size in _comic_image_max_height_pt() - not a flat guess -
+    /* Computed per page_profile/font_size in _comic_image_max_height_in() - not a flat guess -
     so a strip scaled to this height always leaves room for its own headline above it on a fresh
     page. Lives here (not in storyprovider/comic.py's own inline _COMIC_CSS) because only this
     module ever knows the active page_profile/font_size; comic.py's Story is constructed without
     either. width:auto alongside (not height:auto) keeps this from forcing every image up to
-    this height - only strips whose natural scaled height would otherwise exceed it are capped.
-    In points, not in/mm: the computation already works in points throughout (see
-    _comic_image_max_height_pt()), and a length is a length to CSS regardless of unit - there's
-    no reason to convert back to whatever unit this profile's own `size` happened to be written
-    in, just to match it. */
+    this height - only strips whose natural scaled height would otherwise exceed it are capped. */
     .comic-strip-body img.comic-strip {{
-        max-height: {comic_image_max_height_pt:.1f}pt;
+        max-height: {comic_image_max_height_in:.2f}in;
         width: auto;
         height: auto;
     }}

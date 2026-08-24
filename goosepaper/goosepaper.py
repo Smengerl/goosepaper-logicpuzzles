@@ -16,7 +16,7 @@ from goosepaper.story import Story
 
 from .storyprovider.imageutil import reencode_image_as_data_uri
 from .storyprovider.storyprovider import StoryProvider
-from .styles import PageProfile, Style
+from .styles import PageProfile, Style, _parse_length_inches
 from .util import PlacementPreference
 from .version import __version__
 
@@ -47,17 +47,6 @@ def _get_style(style):
         except Exception as err:
             raise ValueError(f"Invalid style {style}") from err
     return style_obj
-
-
-def _parse_length_inches(value: str) -> float:
-    """Parses a PageProfile length ("6.18in", "9mm") into inches - the only two units any
-    bundled page_profile currently uses (see styles.py's _PAGE_PROFILES)."""
-    value = value.strip()
-    if value.endswith("mm"):
-        return float(value[:-2]) / 25.4
-    if value.endswith("in"):
-        return float(value[:-2])
-    raise ValueError(f"Unsupported page_profile length unit: {value!r}")
 
 
 def _image_max_dimension(profile: PageProfile, effective_columns: int) -> int:
