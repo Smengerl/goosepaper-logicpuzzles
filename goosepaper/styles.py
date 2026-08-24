@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.resources as resources
+import re
 from dataclasses import dataclass
 
 
@@ -227,10 +228,50 @@ def _read_style_from_root(root, style):
     return None, []
 
 
+def _inches(value: str) -> float:
+    """Parses a CSS length like "0.36in" - the only unit PageProfile values ever use - to a bare
+    float. Not a general CSS-length parser; deliberately narrow to what PageProfile actually
+    contains."""
+    match = re.match(r"([\d.]+)in$", value.strip())
+    if not match:
+        raise ValueError(f'Expected an inch value like "0.36in", got {value!r}.')
+    return float(match.group(1))
+
+
+def _comic_image_max_height_in(profile: PageProfile, font_size: int) -> float:
+    """How tall a comic image is allowed to get before WeasyPrint's page-break-inside "avoid" on
+    its article (see storyprovider/comic.py's short_form comment) stops being reliable - derived
+    from the page profile actually in use and the configured font size, not a flat guess. A strip
+    scaled to exactly this height is guaranteed to leave room for its own headline above it on a
+    fresh page, on any page profile: profiles vary a lot in absolute size (e.g. "paper_pro" at
+    9.44in tall vs. "paper_pro_move" at 6.36in), but the headline's own height barely does (it
+    tracks font_size, not page size) - so a single hardcoded height, and *especially* a single
+    hardcoded fraction of page height (which was tried first, and calibrated against only one
+    profile by accident), both drift wrong on every other profile.
+
+    Reserves 2 lines' worth of the headline (`article.story-short > .story-headline`)'s own
+    font-size/line-height - covers a comic label long enough to wrap at a narrow page width (e.g.
+    "Wallace The Brave") without needing to special-case it - plus that headline's own
+    margin-bottom, plus a small fixed buffer for rounding/border effects that isn't worth
+    computing exactly. Kept in sync with those CSS values by hand, same as ComicType/
+    _COMIC_SOURCES in comic.py - there's no shared source of truth to compute it from instead.
+    """
+    page_height_in = _inches(profile.size.split()[1])
+    content_height_in = (
+        page_height_in - _inches(profile.margin_top) - _inches(profile.margin_bottom)
+    )
+    headline_pt = font_size * 1.16  # article.story-short > .story-headline { font-size: 1.16em }
+    two_lines_pt = 2 * headline_pt * 1.12  # ... line-height: 1.12
+    margin_bottom_pt = font_size * 0.28  # ... margin-bottom: 0.28rem
+    reserved_in = (two_lines_pt + margin_bottom_pt) / 72 + 0.05  # + small fixed buffer
+    return content_height_in - reserved_in
+
+
 def _base_print_css(
     profile: PageProfile, font_size: int, effective_columns: int
 ) -> str:
     toc_columns = 1 if effective_columns == 1 else 2
+    comic_image_max_height_in = _comic_image_max_height_in(profile, font_size)
     return f"""
     @page {{
         size: {profile.size};
@@ -684,6 +725,29 @@ def _base_print_css(
     article > .byline {{
         margin: 0 0 0.55rem;
         font-size: 0.75em;
+    }}
+
+    /* short_form stories (puzzles, weather, reddit/bluesky posts, comics) are compact, single-
+    unit cards, never a multi-paragraph article - unlike a regular story, there's no benefit to
+    letting one flow across a page break, only the risk of a heading/small-card fragment being
+    stranded away from the rest of it (see storyprovider/comic.py's short_form comment for the
+    concrete case this fixes). article > h1's own `break-after: avoid` above is a same-side hint
+    only, and isn't always strong enough on its own once the following block is tall relative to
+    the page. */
+    article.story-short {{
+        page-break-inside: avoid;
+    }}
+
+    /* Computed per page_profile/font_size in _comic_image_max_height_in() - not a flat guess -
+    so a strip scaled to this height always leaves room for its own headline above it on a fresh
+    page. Lives here (not in storyprovider/comic.py's own inline _COMIC_CSS) because only this
+    module ever knows the active page_profile/font_size; comic.py's Story is constructed without
+    either. width:auto alongside (not height:auto) keeps this from forcing every image up to
+    this height - only strips whose natural scaled height would otherwise exceed it are capped. */
+    .comic-strip-body img.comic-strip {{
+        max-height: {comic_image_max_height_in:.2f}in;
+        width: auto;
+        height: auto;
     }}
 
     article.story-short > .story-headline {{

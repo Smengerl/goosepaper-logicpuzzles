@@ -48,6 +48,17 @@ _COMIC_CSS = """
 .comic-subtitle { font-size: 0.85em; font-style: italic; color: #444; margin-top: 0.4em; }
 </style>
 """
+# A full-width Sunday-format strip (taller aspect ratio than a weekday strip) can otherwise
+# scale to very nearly a full page's height, leaving no room for its own headline above it on a
+# fresh page - and WeasyPrint's page-break-inside/break-after "avoid" hints (see styles.py's
+# `article.story-short`) only help when the whole headline+image unit actually fits on a fresh
+# page; when it doesn't, even by a small margin, WeasyPrint's own fragmentation algorithm falls
+# back to placing what fits (the heading) and stranding the rest on the next page, rather than
+# deferring the whole thing (see weasyprint/layout/block.py's "ignore this 'avoid' and break
+# anyway" fallback for a box that still doesn't fit starting on an empty page). The actual
+# max-height cap that prevents this lives in styles.py's `_comic_image_max_height_in()`/
+# `.comic-strip-body img.comic-strip` instead of here: it depends on the active page_profile and
+# font_size, neither of which this module has - styles.py is the only place that does.
 
 
 def _first(values: List[str]) -> Optional[str]:
@@ -282,5 +293,14 @@ class DailyComicStoryProvider(StoryProvider):
                     _COMIC_CSS + f'<div class="comic-strip-body">{body_html}</div>'
                 ),
                 date=datetime.datetime.combine(strip_date, datetime.time()),
+                # A comic's body is a single unbreakable image - like a puzzle/weather/reddit/
+                # bluesky card, there's never a good reason to let it be split across a page
+                # boundary (unlike a multi-paragraph RSS article, which SHOULD be allowed to
+                # flow across pages rather than waste space). short_form ties this into the
+                # `article.story-short { break-inside: avoid }` rule in styles.py - without it,
+                # the headline's own `break-after: avoid` isn't a strong enough hint on its own
+                # to keep a large (e.g. Sunday-format) strip's image from landing on its own
+                # headline-less page while the headline stays behind alone.
+                short_form=True,
             )
         ]
