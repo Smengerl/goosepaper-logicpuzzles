@@ -1,5 +1,12 @@
 # CHANGELOG
 
+### **v0.10.0** (August 29, 2026)
+
+-   Improvements
+    -   Added a `Story.headline_visible` field (default `True`) - `DailyComicStoryProvider` now sets it `False` on every comic story, since the strip already draws its own title into the image and the fixed, source-derived headline would just repeat it as running text above; the headline text itself stays available for the table of contents and anchor ids either way.
+-   Fixes
+    -   Removed a duplicate definition each of `_normalize_heading_text`, `_heading_matches_headline`, and `_strip_duplicate_leading_heading` in `storyprovider/rss.py`, introduced by a merge that combined this fork's own copy of an already-upstreamed fix with upstream's own copy of the same fix reached independently. Dead code only (Python's name rebinding meant just the second copy of each was ever reachable) - no behavior change.
+
 ### **v0.9.0** (August 29, 2026)
 
 -   Improvements
