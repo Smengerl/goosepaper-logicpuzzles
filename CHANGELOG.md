@@ -1,5 +1,10 @@
 # CHANGELOG
 
+### **v0.9.0** (August 29, 2026)
+
+-   Improvements
+    -   Added a `section_heading_visible` field (on `Story`/`SectionProvider`/the source config's declarative `"section"` field) - `false` keeps a section's stories in the table of contents while hiding the heading itself from the printed page, for a group whose content already carries its own visual identity (e.g. comic strips that draw their own title into the image) and doesn't need it repeated as running text.
+
 ### **v0.8.1** (May 29, 2026)
 
 -   Fixes
