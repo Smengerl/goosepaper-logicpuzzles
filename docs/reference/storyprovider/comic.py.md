@@ -42,6 +42,12 @@ title - and no byline is set: a byline or dynamic per-day headline would just re
 same source name the headline already shows, unlike a byline on an RSS article (which
 distinguishes otherwise-anonymous entries pulled from different feeds).
 
+That headline is also never rendered above the strip - the strip already shows its own
+title drawn into the image, so repeating it as running text would be a plain duplicate.
+The text itself is still kept, just not painted: it still names the strip in the table of
+contents (whether grouped into a section or standing on its own), and still seeds the
+strip's anchor id. This is fixed for every comic, not a config option.
+
 The strip image itself is left as a plain remote link - this source only resolves which
 URL is the actual strip. Fetching it, bounding its pixel dimensions, normalizing color
 mode (handling CMYK source JPEGs), compositing any transparency onto white, and inlining
