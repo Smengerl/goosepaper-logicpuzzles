@@ -298,3 +298,40 @@ def test_construct_story_providers_wraps_source_with_section_from_source_config(
     assert providers[0].get_stories()[0].section_title == "Tech"
     assert not isinstance(providers[1], SectionProvider)
     assert providers[1].get_stories()[0].section_title is None
+
+
+def test_construct_story_providers_passes_section_heading_visible_from_dict():
+    providers = construct_story_providers_from_source_configs(
+        [
+            {
+                "type": "text",
+                "headline": "A",
+                "section": "Comics",
+                "section_heading_visible": False,
+            },
+            {"type": "text", "headline": "B", "section": "Tech"},
+        ]
+    )
+
+    assert providers[0].get_stories()[0].section_heading_visible is False
+    # Default stays True when the dict doesn't mention the field at all.
+    assert providers[1].get_stories()[0].section_heading_visible is True
+
+
+def test_construct_story_providers_passes_section_heading_visible_from_source_config():
+    """Same as the dict-based test above, but through SourceConfig objects - the object and dict
+    code paths in _source_config_parts are separate, so both need covering."""
+    providers = construct_story_providers_from_source_configs(
+        [
+            SourceConfig(
+                type="text",
+                options={"headline": "A"},
+                section="Comics",
+                section_heading_visible=False,
+            ),
+            SourceConfig(type="text", options={"headline": "B"}, section="Tech"),
+        ]
+    )
+
+    assert providers[0].get_stories()[0].section_heading_visible is False
+    assert providers[1].get_stories()[0].section_heading_visible is True
