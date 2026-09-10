@@ -1,5 +1,12 @@
 # CHANGELOG
 
+### **v0.11.0** (September 10, 2026)
+
+-   Docs
+    -   Documented that `SectionProvider` grouping is by *consecutive* run, not global (`Goosepaper._story_runs`): sources meant for one section must be listed together in the config, or the section heading renders once per run. A run whose sources disagree on `section_heading_visible` hides the heading (hiding is the sticky outcome). README and `SourceConfig.section`, with test coverage for both the supported and the split-run cases.
+-   Chores
+    -   Synced `mainline` with upstream `master`: `feature/comic-provider` (#133) and `fix/rss-per-entry-errors` (#128) are now merged upstream, and the reMarkable upload dependency moves to `remarkapy>=0.3.1,<0.4` (#148).
+
 ### **v0.10.0** (August 29, 2026)
 
 -   Improvements
