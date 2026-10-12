@@ -61,10 +61,14 @@ class _FakeResponse:
 @pytest.fixture(autouse=True)
 def sleeps(monkeypatch):
     """Records the pauses the retry logic asks for instead of actually sleeping, and gives
-    every test a fresh retry-time budget (it is process-wide state)."""
+    every test a fresh retry-time budget and request history (both are process-wide state).
+    The spacing between requests is switched off here so it doesn't show up in `sleeps`; the
+    tests that cover it turn it on explicitly."""
     recorded = []
     monkeypatch.setattr(comic, "_sleep", recorded.append)
     monkeypatch.setattr(comic, "_retry_wait_used_s", 0.0)
+    monkeypatch.setattr(comic, "_last_response_at", {})
+    monkeypatch.setattr(comic, "_MIN_REQUEST_INTERVAL_S", 0.0)
     return recorded
 
 
@@ -438,3 +442,116 @@ def test_retry_time_budget_is_shared_and_stops_further_waiting(monkeypatch, slee
 
 def _xkcd_ok() -> bytes:
     return _XKCD_HTML
+
+
+# --- spacing between requests --------------------------------------------------------------
+
+
+class _FakeClock:
+    """A clock that only moves when something sleeps or the test advances it."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = _FakeClock()
+    monkeypatch.setattr(comic, "_monotonic", fake.monotonic)
+    monkeypatch.setattr(comic, "_sleep", fake.sleep)
+    monkeypatch.setattr(comic, "_MIN_REQUEST_INTERVAL_S", 1.5)
+    return fake
+
+
+def test_default_request_spacing_is_one_and_a_half_seconds(monkeypatch):
+    # The autouse fixture zeroes the constant for the other tests; undo it to see the real one.
+    monkeypatch.undo()
+    assert comic._MIN_REQUEST_INTERVAL_S == 1.5
+
+
+def test_requests_to_the_same_host_are_spaced_out(monkeypatch, clock):
+    sent_at = []
+
+    def fake_get(url, *, headers, timeout):
+        sent_at.append(clock.now)
+        clock.now += 0.4  # the request itself takes a moment
+        return _FakeResponse(_gocomics_html())
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    for slug in ("garfield", "peanuts", "bignate"):
+        comic.DailyComicStoryProvider(
+            comic_type="gocomics", comic_name=slug, date=datetime.date(2026, 10, 12)
+        ).get_stories()
+
+    # The first request goes out at once; every later one waits until 1.5 s after the
+    # previous *response* (not request), whichever provider instance sends it.
+    assert clock.sleeps == [1.5, 1.5]
+    assert sent_at[1] - (sent_at[0] + 0.4) == pytest.approx(1.5)
+    assert sent_at[2] - (sent_at[1] + 0.4) == pytest.approx(1.5)
+
+
+def test_only_the_remaining_time_is_waited_when_something_else_already_took_a_while(
+    monkeypatch, clock
+):
+    def fake_get(url, *, headers, timeout):
+        return _FakeResponse(_gocomics_html())
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+    make = lambda: comic.DailyComicStoryProvider(  # noqa: E731
+        comic_type="gocomics", comic_name="garfield", date=datetime.date(2026, 10, 12)
+    )
+
+    make().get_stories()
+    clock.now += 1.0  # e.g. rendering another section
+    make().get_stories()
+    clock.now += 5.0  # long enough ago: no wait at all
+    make().get_stories()
+
+    assert clock.sleeps == [pytest.approx(0.5)]
+
+
+def test_different_hosts_do_not_delay_each_other(monkeypatch, clock):
+    def fake_get(url, *, headers, timeout):
+        return _FakeResponse(_XKCD_HTML if "xkcd" in url else _gocomics_html())
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+    comic.DailyComicStoryProvider(
+        comic_type="gocomics", comic_name="garfield", date=datetime.date(2026, 10, 12)
+    ).get_stories()
+
+    assert clock.sleeps == []
+
+
+def test_date_fallback_requests_are_spaced_too(monkeypatch, clock):
+    def fake_get(url, *, headers, timeout):
+        if url.endswith("/2026/10/13"):
+            return _FakeResponse(b"<html><body>not published yet</body></html>")
+        return _FakeResponse(_gocomics_html())
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    comic.DailyComicStoryProvider(
+        comic_type="gocomics", comic_name="garfield", date=datetime.date(2026, 10, 13)
+    ).get_stories()
+
+    assert clock.sleeps == [1.5]
+
+
+def test_retry_after_a_long_backoff_needs_no_extra_spacing(monkeypatch, clock):
+    answers = iter([_FakeResponse(b"", status_code=429), _FakeResponse(_xkcd_ok())])
+    monkeypatch.setattr(comic.requests, "get", lambda url, *, headers, timeout: next(answers))
+
+    comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+
+    assert clock.sleeps == [15.0]  # only the backoff pause; 15 s already exceeds the spacing

@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime
 import json
 import time
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from html import escape
 from typing import Callable, Dict, List, Literal, Optional
@@ -62,9 +63,23 @@ _RETRY_AFTER_CAP_S = 300
 # is worth. Once spent, further 429s fail immediately, exactly as before retries existed.
 _RETRY_BUDGET_S = 8 * 60
 
+# The block above is triggered by the *rate*: measured against gocomics.com, ten page requests
+# in about four seconds went through and the eleventh was refused, while the same sequence with
+# a pause of about a second after each response (thirteen requests in twenty seconds) was not.
+# So requests to the same host are spaced out - at least this many seconds between receiving
+# one response and sending the next request. The edition's comics are fetched one after another
+# anyway, so this only adds a second or two per strip; it makes the block (and the long retry
+# wait it would cost) much less likely in the first place. Applies to every attempt, including
+# the date fallbacks of a strip lookup.
+_MIN_REQUEST_INTERVAL_S = 1.5
+
 _retry_wait_used_s = 0.0
-# Indirection so tests can replace the sleeping.
+# Per host: when the last response arrived (monotonic clock). Process-wide on purpose - every
+# comic of an edition is its own provider instance, and the limit is the site's, not ours.
+_last_response_at: Dict[str, float] = {}
+# Indirection so tests can replace the sleeping and the clock.
 _sleep = time.sleep
+_monotonic = time.monotonic
 
 _COMIC_CSS = """
 <style>
@@ -85,6 +100,21 @@ def _retry_after_seconds(response) -> Optional[float]:
         return None
 
 
+def _throttled_get(url: str, headers: Dict[str, str]):
+    """`requests.get`, but never sooner than `_MIN_REQUEST_INTERVAL_S` after the previous
+    response from the same host."""
+    host = urlsplit(url).netloc
+    last = _last_response_at.get(host)
+    if last is not None:
+        remaining = _MIN_REQUEST_INTERVAL_S - (_monotonic() - last)
+        if remaining > 0:
+            _sleep(remaining)
+    try:
+        return requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+    finally:
+        _last_response_at[host] = _monotonic()
+
+
 def _get_with_backoff(url: str, headers: Dict[str, str]):
     """`requests.get` that waits out and retries "slow down" answers (see _RETRY_STATUSES),
     then behaves exactly like `get` + `raise_for_status` - every other failure, and a block
@@ -92,7 +122,7 @@ def _get_with_backoff(url: str, headers: Dict[str, str]):
     global _retry_wait_used_s
     attempt = 0
     while True:
-        response = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+        response = _throttled_get(url, headers)
         status = getattr(response, "status_code", None)
         if status not in _RETRY_STATUSES or attempt >= len(_RETRY_BACKOFF_S):
             response.raise_for_status()
@@ -235,6 +265,10 @@ class DailyComicStoryProvider(StoryProvider):
     any section at all, and it still seeds the anchor id `to_html()` generates for linking to it.
     This is a fixed property of every comic story, not a config-exposed option - a comic asking
     to show its own headline again isn't a real use case this provider needs to support.
+
+    Requests to the same site are spaced at least 1.5 seconds apart (`_MIN_REQUEST_INTERVAL_S`),
+    across all comics of the process, since gocomics.com refuses a client that sends its page
+    requests in a quick burst.
 
     A "429 Too Many Requests" (or 503) from the site is not treated as a failure right away:
     the request is retried after growing pauses of 15, 45, 120 and 180 seconds (a
