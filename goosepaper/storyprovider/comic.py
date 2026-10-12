@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 from dataclasses import dataclass, field
 from html import escape
 from typing import Callable, Dict, List, Literal, Optional
@@ -41,6 +42,30 @@ _DEFAULT_TIMEOUT = 20
 # or timezone generation happens to run in.
 _MAX_FALLBACK_DAYS = 3
 
+# gocomics.com (served through a CDN) answers a burst of page requests with "429 Too Many
+# Requests" and then keeps refusing that client for a while - measured at roughly five minutes
+# (still blocked ~280 s after the first 429, clear again ~305 s after it). A strip lookup that
+# hits it used to fail outright, taking that comic out of the edition. Instead, wait it out:
+# retry the same URL after growing pauses, long enough in total to outlast such a block.
+#
+# Only statuses that mean "slow down, try again later" are retried - a 404 or a markup problem
+# won't get better by waiting.
+_RETRY_STATUSES = frozenset({429, 503})
+# Seconds to wait before retry 1, 2, 3, ...; once the list runs out the error is raised as before.
+# Cumulative: 15, 60, 180, 360 s.
+_RETRY_BACKOFF_S = (15, 45, 120, 180)
+# A server-sent Retry-After longer than the scheduled pause wins, but never beyond this.
+_RETRY_AFTER_CAP_S = 300
+# Upper bound on the total time one process spends waiting for retries, across *all* requests
+# and all providers. Without it every comic hitting a persistent block would burn the whole
+# schedule again, one after the other, and stall the edition far beyond what a missing strip
+# is worth. Once spent, further 429s fail immediately, exactly as before retries existed.
+_RETRY_BUDGET_S = 8 * 60
+
+_retry_wait_used_s = 0.0
+# Indirection so tests can replace the sleeping.
+_sleep = time.sleep
+
 _COMIC_CSS = """
 <style>
 .comic-strip-body { text-align: center; }
@@ -48,6 +73,50 @@ _COMIC_CSS = """
 .comic-subtitle { font-size: 0.85em; font-style: italic; color: #444; margin-top: 0.4em; }
 </style>
 """
+
+
+def _retry_after_seconds(response) -> Optional[float]:
+    """The response's Retry-After as seconds, if it carries one in the plain-number form
+    (the HTTP-date form is ignored - the scheduled backoff applies instead)."""
+    value = (getattr(response, "headers", None) or {}).get("Retry-After")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_with_backoff(url: str, headers: Dict[str, str]):
+    """`requests.get` that waits out and retries "slow down" answers (see _RETRY_STATUSES),
+    then behaves exactly like `get` + `raise_for_status` - every other failure, and a block
+    that outlasts the schedule or the budget, still raises right away."""
+    global _retry_wait_used_s
+    attempt = 0
+    while True:
+        response = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+        status = getattr(response, "status_code", None)
+        if status not in _RETRY_STATUSES or attempt >= len(_RETRY_BACKOFF_S):
+            response.raise_for_status()
+            return response
+
+        wait = float(_RETRY_BACKOFF_S[attempt])
+        retry_after = _retry_after_seconds(response)
+        if retry_after:
+            wait = min(max(wait, retry_after), _RETRY_AFTER_CAP_S)
+        if _retry_wait_used_s + wait > _RETRY_BUDGET_S:
+            print(
+                f"Sad honk :/ {url} answered {status} and this run's retry time budget "
+                f"({_RETRY_BUDGET_S}s) is used up - giving up on it."
+            )
+            response.raise_for_status()
+            return response
+
+        attempt += 1
+        print(
+            f"Sad honk :/ {url} answered {status} (too many requests); waiting {wait:.0f}s "
+            f"before retry {attempt}/{len(_RETRY_BACKOFF_S)}."
+        )
+        _sleep(wait)
+        _retry_wait_used_s += wait
 
 
 def _first(values: List[str]) -> Optional[str]:
@@ -167,6 +236,14 @@ class DailyComicStoryProvider(StoryProvider):
     This is a fixed property of every comic story, not a config-exposed option - a comic asking
     to show its own headline again isn't a real use case this provider needs to support.
 
+    A "429 Too Many Requests" (or 503) from the site is not treated as a failure right away:
+    the request is retried after growing pauses of 15, 45, 120 and 180 seconds (a
+    `Retry-After` header, if sent, can lengthen a pause), which is long enough to outlast the
+    roughly five-minute block gocomics.com imposes after a burst of requests. The total time one
+    process may spend on such waits is capped (see `_RETRY_BUDGET_S`), so a persistent block
+    can't stall a whole edition; past that, or after the last retry, the error is raised as
+    before and Goosepaper drops just this comic.
+
     The strip image itself is left as a remote `<img src>` link, not fetched or embedded here -
     this provider's job ends at resolving which URL is the actual strip. Only the *page* fetch
     needs gocomics.com's browser-like headers - without them it 403s. The image itself, served
@@ -229,10 +306,7 @@ class DailyComicStoryProvider(StoryProvider):
             candidate_date = strip_date - datetime.timedelta(days=offset)
             page_url = source.page_url.format(date=candidate_date, slug=self.comic_name)
 
-            page_response = requests.get(
-                page_url, headers=source.headers, timeout=_DEFAULT_TIMEOUT
-            )
-            page_response.raise_for_status()
+            page_response = _get_with_backoff(page_url, source.headers)
 
             doc = lxml_html.fromstring(page_response.content)
             # Resolves every href/src in the tree against page_url in place, so the xpath

@@ -47,12 +47,25 @@ def _arcamax_html(series_name: str = "Garfield") -> bytes:
 
 
 class _FakeResponse:
-    def __init__(self, content: bytes, headers: dict = None):
+    def __init__(self, content: bytes, headers: dict = None, status_code: int = 200):
         self.content = content
         self.headers = headers or {}
+        self.status_code = status_code
 
     def raise_for_status(self):
+        if self.status_code >= 400:
+            raise comic.requests.HTTPError(f"{self.status_code} Client Error")
         return None
+
+
+@pytest.fixture(autouse=True)
+def sleeps(monkeypatch):
+    """Records the pauses the retry logic asks for instead of actually sleeping, and gives
+    every test a fresh retry-time budget (it is process-wide state)."""
+    recorded = []
+    monkeypatch.setattr(comic, "_sleep", recorded.append)
+    monkeypatch.setattr(comic, "_retry_wait_used_s", 0.0)
+    return recorded
 
 
 def test_unknown_comic_type_is_rejected():
@@ -301,3 +314,127 @@ def test_arcamax_does_not_retry_across_dates_since_its_url_is_not_date_scoped(mo
         provider.get_stories()
 
     assert calls == ["https://www.arcamax.com/thefunnies/garfield/"]
+
+
+# --- retry with backoff on "429 Too Many Requests" -----------------------------------------
+
+
+def test_429_is_waited_out_and_retried_until_it_succeeds(monkeypatch, sleeps, capsys):
+    """gocomics.com blocks a client for a few minutes after a burst of requests. A 429 used to
+    drop the comic from the edition; now the same URL is retried after growing pauses."""
+    answers = iter(
+        [
+            _FakeResponse(b"", status_code=429),
+            _FakeResponse(b"", status_code=429),
+            _FakeResponse(_gocomics_html("Wallace the Brave")),
+        ]
+    )
+    seen_urls = []
+
+    def fake_get(url, *, headers, timeout):
+        seen_urls.append(url)
+        return next(answers)
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    provider = comic.DailyComicStoryProvider(
+        comic_type="gocomics", comic_name="wallace-the-brave", date=datetime.date(2026, 10, 12)
+    )
+    stories = provider.get_stories()
+
+    assert stories[0].headline == "Wallace the Brave"
+    assert sleeps == [15, 45]
+    # The retries hit the very same URL - no date fallback is triggered by a 429.
+    assert set(seen_urls) == {"https://www.gocomics.com/wallace-the-brave/2026/10/12"}
+    assert len(seen_urls) == 3
+    assert "429" in capsys.readouterr().out
+
+
+def test_persistent_429_raises_after_the_last_retry(monkeypatch, sleeps):
+    calls = []
+
+    def fake_get(url, *, headers, timeout):
+        calls.append(url)
+        return _FakeResponse(b"", status_code=429)
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    provider = comic.DailyComicStoryProvider(
+        comic_type="gocomics", comic_name="garfield", date=datetime.date(2026, 10, 12)
+    )
+    with pytest.raises(comic.requests.HTTPError, match="429"):
+        provider.get_stories()
+
+    assert sleeps == [15, 45, 120, 180]
+    assert len(calls) == len(comic._RETRY_BACKOFF_S) + 1  # first try + one per pause
+
+
+def test_total_backoff_covers_the_observed_five_minute_block():
+    """Guards the numbers, not the mechanism: the schedule must outlast a ~5 min block."""
+    assert sum(comic._RETRY_BACKOFF_S) >= 5 * 60
+
+
+def test_retry_after_header_lengthens_the_pause_but_is_capped(monkeypatch, sleeps):
+    monkeypatch.setattr(comic, "_RETRY_BUDGET_S", 10_000)  # not what this test is about
+    answers = iter(
+        [
+            _FakeResponse(b"", headers={"Retry-After": "100"}, status_code=429),
+            _FakeResponse(b"", headers={"Retry-After": "99999"}, status_code=429),
+            _FakeResponse(b"", headers={"Retry-After": "soon"}, status_code=429),
+            _FakeResponse(_xkcd_ok()),
+        ]
+    )
+    monkeypatch.setattr(comic.requests, "get", lambda url, *, headers, timeout: next(answers))
+
+    comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+
+    # 100 > scheduled 15 -> 100; huge value -> capped; unparseable -> scheduled 120.
+    assert sleeps == [100, comic._RETRY_AFTER_CAP_S, 120]
+
+
+def test_503_is_retried_like_429(monkeypatch, sleeps):
+    answers = iter([_FakeResponse(b"", status_code=503), _FakeResponse(_xkcd_ok())])
+    monkeypatch.setattr(comic.requests, "get", lambda url, *, headers, timeout: next(answers))
+
+    comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+
+    assert sleeps == [15]
+
+
+def test_other_http_errors_are_not_retried(monkeypatch, sleeps):
+    calls = []
+
+    def fake_get(url, *, headers, timeout):
+        calls.append(url)
+        return _FakeResponse(b"", status_code=404)
+
+    monkeypatch.setattr(comic.requests, "get", fake_get)
+
+    with pytest.raises(comic.requests.HTTPError, match="404"):
+        comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+
+    assert calls == ["https://xkcd.com"]
+    assert sleeps == []
+
+
+def test_retry_time_budget_is_shared_and_stops_further_waiting(monkeypatch, sleeps):
+    """One persistent block must not make every comic burn the whole schedule again."""
+    monkeypatch.setattr(comic, "_RETRY_BUDGET_S", 70)
+    monkeypatch.setattr(
+        comic.requests, "get", lambda url, *, headers, timeout: _FakeResponse(b"", status_code=429)
+    )
+
+    with pytest.raises(comic.requests.HTTPError):
+        comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+    # 15 + 45 = 60 fits into 70; the next pause (120) would exceed it -> give up.
+    assert sleeps == [15, 45]
+
+    sleeps.clear()
+    with pytest.raises(comic.requests.HTTPError):
+        comic.DailyComicStoryProvider(comic_type="xkcd").get_stories()
+    # Only 10 s are left in the budget, so even the first pause (15) no longer fits.
+    assert sleeps == []
+
+
+def _xkcd_ok() -> bytes:
+    return _XKCD_HTML
