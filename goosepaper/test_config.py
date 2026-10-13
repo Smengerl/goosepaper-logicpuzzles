@@ -3,6 +3,8 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from .config import (
     ConfigError,
     DeliveryIntent,
@@ -879,6 +881,22 @@ def test_load_paper_config_rejects_skip_content_filter_with_unknown_field():
             lambda: load_paper_config(config_path),
             "unknown field(s)",
         )
+
+
+@pytest.mark.parametrize("box_size", [3.0, True, "3", 4])
+def test_load_paper_config_rejects_invalid_puzzle_box_size(box_size):
+    with _TempWorkspace() as tmp_path:
+        config_path = tmp_path / "paper.json"
+        _write_json(
+            config_path,
+            {
+                "version": 2,
+                "paper": {"style": "FifthAvenue"},
+                "sources": [{"type": "puzzle", "puzzle_type": "sudoku", "box_size": box_size}],
+            },
+        )
+
+        _assert_config_error(lambda: load_paper_config(config_path), "box_size must be 2 or 3")
 
 
 def test_load_paper_config_rejects_invalid_puzzle_type():
